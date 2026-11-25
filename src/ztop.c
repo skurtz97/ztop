@@ -26,6 +26,7 @@ struct zreq {
     int rc;                      /**< the service's return code */
     void *self;                  /**< scratch: the stub keeps the block here */
     unsigned long long save[18]; /**< the stub's save area: it has no own */
+    int auth;                    /**< TESTAUTH FCTN=1: 0 means authorized */
 };
 
 /* The stub addresses these by offset, because it has no base register:
@@ -33,6 +34,7 @@ struct zreq {
  * area cannot live there. */
 _Static_assert(offsetof(struct zreq, self) == 16, "zvslist.s stores self at 16");
 _Static_assert(offsetof(struct zreq, save) == 24, "zvslist.s uses 24 for save");
+_Static_assert(offsetof(struct zreq, auth) == 168, "zvslist.s stores at 168");
 
 /* HLASM upcases the ESD name of the CSECT, so the assembler side is
  * exported as ZVSLIST whatever case the source is written in. */
@@ -135,6 +137,11 @@ int main(int argc, char **argv) {
     if (zvslist(&req) != 0) {
         fprintf(stderr, "ztop: the assembler stub does not know area %d\n", area);
         return 2;
+    }
+    if (req.auth != 0) {
+        fprintf(stderr, "ztop: not APF-authorized (TESTAUTH %d): VSMLIST "
+                        "needs extattr +a and AC(1)\n", req.auth);
+        return 1;
     }
     if (req.rc != 0) {
         fprintf(stderr, "ztop: VSMLIST returned %d\n", req.rc);

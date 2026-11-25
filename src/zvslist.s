@@ -6,7 +6,7 @@
 * holding the address of the request block.
 *
 *   struct zreq { int area; unsigned len; void *wk; int rc;
-*                 void *self; unsigned long long save[18]; }
+*                 void *self; unsigned long long save[18]; int auth; }
 *
 * area 1 CSA, 2 SQA, 3 LSQA, 4 private; len is the work area length;
 * rc receives the service's return code (0 complete, 4 "did not fit,
@@ -39,6 +39,11 @@ zvslist  RMODE 24
          L     12,=A(zvslist)         the macro needs a literal pool
          L     2,0(1)                 R2 -> struct zreq
          ST    2,16(,2)              self: the macro clobbers registers
+         TESTAUTH FCTN=1            is this task authorized at all
+         L     2,16(,13)            TESTAUTH keeps no registers
+         ST    15,168(,2)           auth code: 0 = authorized
+         LTR   15,15
+         BNZ   OUT                  not authorized, skip the call
          LA    10,24(,2)             our save area, in that block
          ST    13,4(,10)             chain it to the caller's
          ST    10,8(,13)
