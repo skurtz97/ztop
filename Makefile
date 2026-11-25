@@ -8,7 +8,7 @@
 CC      := ibm-clang
 AS      ?= as
 CFLAGS  ?= -std=c23 -O2 -m32 -Wall -Wextra -Wshadow -Wpedantic
-LDFLAGS ?=
+LDFLAGS ?= -Wl,-bAC(1)   # AC(1): the other half of APF, with extattr +a
 
 OBJ = src/zvslist.o
 
@@ -26,6 +26,12 @@ src/zvslist.o: src/zvslist.s
 	      END { exit bad }' $<
 	$(AS) -o $@ $<
 
+# extattr +a on the executable plus the AC(1) above is what makes
+# ztop APF-authorized; a relink drops the bit, so re-run this.
+apf: ztop
+	extattr +a ztop
+	ls -E ztop
+
 check: ztop
 	./ztop
 	./ztop -a sqa
@@ -39,4 +45,4 @@ ifeq ($(shell uname -s),Linux)
 $(error ztop builds only on z/OS; on Linux this tree is a backup copy)
 endif
 
-.PHONY: all check clean
+.PHONY: all apf check clean

@@ -32,9 +32,13 @@ struct zreq {
 /* The stub addresses these by offset, because it has no base register:
  * an assembler CSECT is read-only in an XPLINK load module, so the save
  * area cannot live there. */
+#if defined(__MVS__)
+/* 31-bit z/OS layout is the one the stub addresses; a 64-bit host
+ * lays the pointers out differently and these offsets are meaningless. */
 _Static_assert(offsetof(struct zreq, self) == 16, "zvslist.s stores self at 16");
 _Static_assert(offsetof(struct zreq, save) == 24, "zvslist.s uses 24 for save");
 _Static_assert(offsetof(struct zreq, auth) == 168, "zvslist.s stores at 168");
+#endif
 
 /* HLASM upcases the ESD name of the CSECT, so the assembler side is
  * exported as ZVSLIST whatever case the source is written in. */
