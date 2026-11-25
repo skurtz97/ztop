@@ -11,7 +11,9 @@
 * rc receives the service's return code (0 complete, 4 "did not fit,
 * ask again", anything else is an error).
 *
-* Returns 0 if the service was called, -1 for an unknown area.
+* Returns 0 if the service was called, -1 for an unknown area.  Keep
+* each VSMLIST call on one line: a continuation needs the + in column
+* 72, and a wrapped call reads the tail as a new statement.
 *
 * The request offsets and the area codes are shared with src/ztop.c.
          SYSSTATE AMODE64=NO,ARCHLVL=2,OSREL=ZOSV1R6
@@ -42,17 +44,13 @@ ZTSTK    RMODE 24
          C     3,=F'4'
          BE    PVT
          B     OUT
-CSA      VSMLIST SP=CSA,WKAREA=(4,5),SPACE=ALLOC,LOC=31,+
-               LINKAGE=SYSTEM
+CSA      VSMLIST SP=CSA,WKAREA=(4,5),SPACE=ALLOC,LOC=31
          B     DONE
-SQA      VSMLIST SP=SQA,WKAREA=(4,5),SPACE=ALLOC,LOC=31,+
-               LINKAGE=SYSTEM
+SQA      VSMLIST SP=SQA,WKAREA=(4,5),SPACE=ALLOC,LOC=31
          B     DONE
-LSQA     VSMLIST SP=LSQA,WKAREA=(4,5),SPACE=ALLOC,LOC=31,+
-               LINKAGE=SYSTEM
+LSQA     VSMLIST SP=LSQA,WKAREA=(4,5),SPACE=ALLOC,LOC=31
          B     DONE
-PVT      VSMLIST SP=PVT,WKAREA=(4,5),SPACE=ALLOC,LOC=31,+
-               LINKAGE=SYSTEM
+PVT      VSMLIST SP=PVT,WKAREA=(4,5),SPACE=ALLOC,LOC=31
 DONE     L     2,REQ                  reload: only R15 is promised
          L     4,8(2)                 work area
          L     15,0(4)               service return code

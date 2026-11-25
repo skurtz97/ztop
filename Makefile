@@ -2,6 +2,7 @@
 #
 # z/OS only.  This tree is kept on Linux as a backup copy, which is why
 # `make` there stops with a word about it instead of failing obscurely.
+# Use gmake on z/OS: /bin/make is not GNU make and cannot read this file.
 
 CC      ?= ibm-clang
 AS      ?= as
@@ -15,7 +16,11 @@ all: ztop
 ztop: src/ztop.c $(OBJ)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ src/ztop.c $(OBJ)
 
+# The assembler reads HFS source through the file's coded character set
+# tag; a git checkout arrives tagged UTF-8 and HLASM then reads the file
+# as if it were EBCDIC ("SYNAD ... WRONG LEN RECRD").  Tag it as ASCII.
 src/zvslist.o: src/zvslist.s
+	chtag -t -c ISO8859-1 src/zvslist.s
 	$(AS) -o $@ src/zvslist.s
 
 check: ztop
