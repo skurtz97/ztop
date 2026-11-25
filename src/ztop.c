@@ -15,15 +15,24 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stddef.h>
 #include <string.h>
 
 /** @brief One request to the assembler stub; layout is shared with zvslist.s. */
 struct zreq {
-    int area;      /**< 1 CSA, 2 SQA, 3 LSQA, 4 private */
-    unsigned len;  /**< bytes in wk */
-    void *wk;      /**< work area, VSMLIST writes into it */
-    int rc;        /**< the service's return code */
+    int area;                    /**< 1 CSA, 2 SQA, 3 LSQA, 4 private */
+    unsigned len;                /**< bytes in wk */
+    void *wk;                    /**< work area, VSMLIST writes into it */
+    int rc;                      /**< the service's return code */
+    void *self;                  /**< scratch: the stub keeps the block here */
+    unsigned long long save[18]; /**< the stub's save area: it has no own */
 };
+
+/* The stub addresses these by offset, because it has no base register:
+ * an assembler CSECT is read-only in an XPLINK load module, so the save
+ * area cannot live there. */
+_Static_assert(offsetof(struct zreq, self) == 16, "zvslist.s stores self at 16");
+_Static_assert(offsetof(struct zreq, save) == 24, "zvslist.s uses 24 for save");
 
 /* HLASM upcases the ESD name of the CSECT, so the assembler side is
  * exported as ZVSLIST whatever case the source is written in. */
