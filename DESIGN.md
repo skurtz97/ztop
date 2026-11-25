@@ -6,10 +6,44 @@ Decisions, not a wish list.  Anything not yet measured says so.
 
 `VSMLIST` (MVS Authorized Assembler Services Reference, chapter 30).  It is
 the only documented interface that reports allocated storage by subpool for
-CSA, SQA, LSQA and the private area, and its caller requirement is problem
-state, PSW key 8-15, `LINKAGE=SYSTEM`, AMODE 24 or 31 -- an ordinary user
-task.  It returns, per subpool, the 4K-multiple blocks that hold allocations
-and the bytes allocated inside them.
+CSA, SQA, LSQA and the private area.  Per subpool it returns the 4K-multiple
+blocks that hold allocations and the bytes allocated inside them.
+
+## Authorization: unresolved, and the real blocker
+
+The reference gives the caller requirement as problem state, PSW key 8-15,
+`LINKAGE=SYSTEM`, AMODE 24 or 31 -- an ordinary user task -- and that is what
+this design was built on.  The field evidence says otherwise so far, on
+z/OS 3.1 (29.00):
+
+- `LINKAGE=SYSTEM` (the default): `Possible Bad Branch`.  The macro's
+  PC-number path is `L 15,16(0,0)` (CVT), `L 15,772(,15)` (SVT), `L 15,88(,15)`,
+  `PC 0(15)`; the value it branches through does not lead to code here.
+- `LINKAGE=BRANCH`: operation exception (0C1) at the branch entry from
+  `CVT+1140`, which matches the reference's "supervisor state and PSW key 0"
+  for that option, so this one is behaving as documented.
+- `LINKAGE=SVC` (SVC 72): protection exception (0C4) inside the service.
+
+So the one path the reference opens to an unauthorized task has not been made
+to work yet, and the others are refused exactly as documented.  Until someone
+confirms otherwise, treat VSMLIST as authorized-only: no further calls from an
+ordinary user task on the shared system, and no request for APF or key
+changes without the operator's agreement.
+
+What an authorized route would look like, cheapest first:
+
+- a small APF-authorized helper in a system library that the ordinary tool
+  invokes and whose output it reads;
+- `mvscmdauth` (ZOAU) running an authorized program;
+- the operator path: `D VSMLIST`-style console output through `opercmd`,
+  which needs OPERCMDS.
+
+## What ZOAU already provides
+
+Checked so it is not duplicated: ZOAU 1.4 ships no storage or subpool
+facility.  `zinfo` reports IPL, CPU, system and IODF information only;
+`apfadm`, `mvscmd`, `mvscmdauth`, `opercmd` are ways to run other programs or
+console commands, not sources of VSM data.  Nothing overlaps.
 
 Rejected as sources, and why:
 
@@ -31,9 +65,20 @@ system interface, one page, and everything else -- parsing, formatting,
 options -- is C23.  No control-block offsets are written down anywhere:
 the macro brings its own.
 
-The C side calls it with `#pragma linkage(zvslist, OS_UPSTACK)`: at `-m32`
-plain `OS` means "no save area" and a traditional upward-stack service
-abends on the first call (measured in zash, `src/sys_zos.c:585`).
+The C side calls it with `#pragma linkage(zvslist, OS)`; `OS_UPSTACK`,
+`__attribute__((OS))` and `OS31_NOSTACK` all abended at `-m32`, plain `OS`
+does not.  HLASM upcases the entry name, so the C side binds `ZVSLIST` with
+`__asm__("ZVSLIST")`.
+
+Two things about the stub that are not obvious and cost a day each:
+
+- In an XPLINK load module an assembler CSECT is read-only.  Reading a word
+  out of it works; the first store takes a 0C4.  So the save area and every
+  scratch word live in the caller's block (`struct zreq`), and the CSECT
+  holds only code, the base register and the literal pool.
+- `WKAREA=(4,5)` is read as an address constant, not a register: the macro
+  then generates `LA 1,4` and stores its control block at address 12.  A
+  register operand needs the doubled form, `WKAREA=((4),5)`.
 
 ## Language level
 
