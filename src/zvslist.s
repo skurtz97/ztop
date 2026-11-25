@@ -38,16 +38,17 @@ zvslist  RMODE 24
          USING *,12
          L     12,=A(zvslist)         the macro needs a literal pool
          L     2,0(1)                 R2 -> struct zreq
-         ST    2,16(,2)              self: the macro clobbers registers
+         LR    11,2                 R11 keeps it: services keep R11
+         LA    10,24(,2)             our save area, in that block
+         ST    13,4(,10)             chain it to the caller's first
+         ST    10,8(,13)
+         LR    13,10
+         ST    2,16(,2)              self, for the caller's information
          TESTAUTH FCTN=1            is this task authorized at all
-         L     2,16(,13)            TESTAUTH keeps no registers
+         LR    2,11                 TESTAUTH owns R0, R1 and R15
          ST    15,168(,2)           auth code: 0 = authorized
          LTR   15,15
          BNZ   OUT                  not authorized, skip the call
-         LA    10,24(,2)             our save area, in that block
-         ST    13,4(,10)             chain it to the caller's
-         ST    10,8(,13)
-         LR    13,10
          L     3,0(2)                 area
          L     5,4(2)                 work area length
          L     4,8(2)                 work area address
@@ -70,7 +71,7 @@ SQA      VSMLIST SP=SQA,WKAREA=((4),5)
 LSQA     VSMLIST SP=LSQA,WKAREA=((4),5)
          B     DONE
 PVT      VSMLIST SP=PVT,WKAREA=((4),5)
-DONE     L     2,16(,13)              self, from our save area's block
+DONE     LR    2,11                 the struct, kept in R11
          L     4,8(2)                 work area
          L     15,0(4)               service return code
          ST    15,12(2)
