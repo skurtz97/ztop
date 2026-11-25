@@ -4,7 +4,8 @@
 # `make` there stops with a word about it instead of failing obscurely.
 # Use gmake on z/OS: /bin/make is not GNU make and cannot read this file.
 
-CC      ?= ibm-clang
+# CC is predefined by make, so ?= would keep /bin/cc.
+CC      := ibm-clang
 AS      ?= as
 CFLAGS  ?= -std=c23 -O2 -m32 -Wall -Wextra -Wshadow -Wpedantic
 LDFLAGS ?=
