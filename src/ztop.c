@@ -138,8 +138,10 @@ int main(int argc, char **argv) {
     }
 
     struct zreq req = {.area = area, .len = WORK, .wk = work, .rc = -1};
-    if (zvslist(&req) != 0) {
-        fprintf(stderr, "ztop: the assembler stub does not know area %d\n", area);
+    int stub = zvslist(&req);
+    if (stub != 0) {
+        fprintf(stderr, "ztop: the stub returned %d for area %d (auth %d)\n",
+                stub, area, req.auth);
         return 2;
     }
     if (req.auth != 0) {
