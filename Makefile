@@ -15,7 +15,9 @@
 #
 # The build is POSIX make, the make z/OS ships: no :=, no ?=, no ifeq,
 # no $(shell), no pattern rules.  gmake is not installed everywhere and
-# /bin/make is not GNU make.
+# /bin/make is not GNU make.  One more z/OS make trait to know about: a
+# recipe line holding a pipeline *and* a || spins it, so the pipeline is
+# parenthesised (make/tests on the ztop machine depend on that).
 
 CC      = ibm-clang
 AS      = as
@@ -28,9 +30,9 @@ LDFLAGS = -Wl,'-bAC(1)'
 OBJ = src/zvslist.o
 
 all:
-	@uname -s | grep OS/390 >/dev/null || \
+	@(uname -s | grep OS/390 > /dev/null) || \
 	    { echo "ztop builds only on z/OS; this tree is a backup copy"; exit 1; }
-	@exec $(MAKE) ztop
+	$(MAKE) ztop
 
 ztop: src/ztop.c $(OBJ)
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ src/ztop.c $(OBJ)
