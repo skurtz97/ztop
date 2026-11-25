@@ -22,6 +22,8 @@ zvslist  AMODE 31
 zvslist  RMODE 24
          ST    13,SAVE13              plain OS linkage: no save area
          ST    14,SAVE14              from the caller, so keep our own
+         LR    12,15
+         USING zvslist,12
          L     2,0(1)                 R2 -> struct zreq
          ST    2,REQ                  the macro clobbers registers
          LA    13,SAVE                the service chains its save area here
