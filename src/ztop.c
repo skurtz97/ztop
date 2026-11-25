@@ -25,7 +25,9 @@ struct zreq {
     int rc;        /**< the service's return code */
 };
 
-extern int zvslist(struct zreq *req);
+/* HLASM upcases the ESD name of the CSECT, so the assembler side is
+ * exported as ZVSLIST whatever case the source is written in. */
+extern int zvslist(struct zreq *req) __asm__("ZVSLIST");
 #pragma linkage(zvslist, OS_UPSTACK)
 
 /** @brief Work area size; IBM's minimum is 4K, a busy CSA needs more. */
