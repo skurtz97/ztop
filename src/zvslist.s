@@ -26,14 +26,14 @@ zvslist  RMODE 24
          USING zvslist,12
          L     2,0(1)                 R2 -> struct zreq
          ST    2,REQ                  the macro clobbers registers
-         LA    13,SAVE                the service chains its save area here
-         XC    0(72,13),0(13)         empty: no caller to point back to
+         LA    13,SAVE            the service chains its save area
+         XC    0(72,13),0(13)       no caller save area to point back to
          L     3,0(2)                 area
          L     5,4(2)                 work area length
          L     4,8(2)                 work area address
          XC    0(4,4),0(4)            return code zero before the call
          LHI   15,-1
-         ST    15,12(2)               unknown area until proven otherwise
+         ST    15,12(2)           unknown area until proven otherwise
          C     3,=F'1'
          BE    CSA
          C     3,=F'2'
