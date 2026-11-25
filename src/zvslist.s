@@ -17,12 +17,12 @@
 *
 * The request offsets and the area codes are shared with src/ztop.c.
          SYSSTATE AMODE64=NO,ARCHLVL=2,OSREL=ZOSV1R6
-ZTSTK    CSECT
-ZTSTK    AMODE 31
-ZTSTK    RMODE 24
+zvslist  CSECT * HLASM is case sensitive: the name is the C symbol
+zvslist  AMODE 31
+zvslist  RMODE 24
          STM   14,12,12(13)
          LR    12,15
-         USING ZTSTK,12
+         USING zvslist,12
          LA    14,SAVE
          ST    13,4(,14)
          ST    14,8(,13)

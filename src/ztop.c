@@ -52,8 +52,8 @@ static void dump(const unsigned char *p, unsigned len) {
             printf(i + j < len ? " %02X" : "   ", p[i + j]);
         printf("  ");
         for (unsigned j = 0; j < 16 && i + j < len; j++)
-            putchar(p[i + j] >= 0x20 && p[i + j] < 0x7F ? p[i + j] : '.');
-        putchar('\n');
+            printf("%c", p[i + j] >= 0x20 && p[i + j] < 0x7F ? p[i + j] : '.');
+        printf("\n");
     }
 }
 
