@@ -3,7 +3,7 @@
 * VSMLIST has no C entry point and is a macro, so this is the only part
 * of the project that has to be assembler.  Called from C as
 * zvslist(&req) with plain OS linkage: R1 points at a one-word list
-* list holding the address of the request block.
+* holding the address of the request block.
 *
 *   struct zreq { int area; unsigned len; void *wk; int rc;
 *                 void *self; unsigned long long save[18]; }
@@ -16,9 +16,8 @@
 *
 * The save area lives in the caller's block (offset 24) rather than in
 * this CSECT: in an XPLINK load module an assembler CSECT is read-only,
-* and the first store into it takes a 0C4.  So there is no base
-* no base register and no literal: every address comes off R1, R2 or
-* R13.
+* and the first store into it takes a 0C4.  Only the base register and
+* the literal pool stay here, and both are read-only.
 *
 * The offsets below are shared with src/ztop.c and checked there.
          SYSSTATE AMODE64=NO,ARCHLVL=2,OSREL=ZOSV1R6
@@ -26,6 +25,9 @@ zvslist  CSECT
 zvslist  AMODE 31
 zvslist  RMODE 24
          STM   14,12,12(13)
+         BALR  12,0
+         USING *,12
+         L     12,=A(zvslist)         the macro needs a literal pool
          L     2,0(1)                 R2 -> struct zreq
          ST    2,16(,2)              self: the macro clobbers registers
          LA    10,24(,2)             our save area, in that block
@@ -62,4 +64,5 @@ DONE     L     2,16(,13)              self, from our save area's block
 OUT      L     13,4(,13)              back to the caller's save area
          LM    14,12,12(13)
          BR    14
+         LTORG
          END
