@@ -16,7 +16,7 @@
 *
 * The save area lives in the caller's block (offset 24) rather than in
 * this CSECT: in an XPLINK load module an assembler CSECT is read-only,
-* and the first store into it takes a 0C4.  For the same reason there is
+* and the first store into it takes a 0C4.  So there is no base
 * no base register and no literal: every address comes off R1, R2 or
 * R13.
 *
