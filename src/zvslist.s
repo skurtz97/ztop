@@ -18,7 +18,6 @@
 *
 * Offsets of the area codes and of the request fields are shared with
 * src/ztop.c; keep the two in step.
-         COPY  ASMMSP
          SYSSTATE AMODE64=NO,ARCHLVL=2,OSREL=ZOSV1R6
 ZTSTK    CSECT
 ZTSTK    AMODE 31
