@@ -20,21 +20,18 @@
 zvslist  CSECT * HLASM is case sensitive: the name is the C symbol
 zvslist  AMODE 31
 zvslist  RMODE 24
-         STM   14,12,12(13)
-         LR    12,15
-         USING zvslist,12
-         LA    14,SAVE
-         ST    13,4(,14)
-         ST    14,8(,13)
-         LR    13,14
+         ST    13,SAVE13              plain OS linkage: no save area
+         ST    14,SAVE14              from the caller, so keep our own
          L     2,0(1)                 R2 -> struct zreq
-         ST    2,REQ                  remember it, the macro clobbers
+         ST    2,REQ                  the macro clobbers registers
+         LA    13,SAVE                the service chains its save area here
+         XC    0(72,13),0(13)         empty: no caller to point back to
          L     3,0(2)                 area
          L     5,4(2)                 work area length
          L     4,8(2)                 work area address
          XC    0(4,4),0(4)            return code zero before the call
          LHI   15,-1
-         ST    2,REQ                  remember it, macro clobbers
+         ST    15,12(2)               unknown area until proven otherwise
          C     3,=F'1'
          BE    CSA
          C     3,=F'2'
@@ -56,10 +53,12 @@ DONE     L     2,REQ                  reload: only R15 is promised
          L     15,0(4)               service return code
          ST    15,12(2)
          SR    15,15
-OUT      L     13,4(,13)
-         LM    14,12,12(13)
+OUT      L     13,SAVE13
+         L     14,SAVE14
          BR    14
 SAVE     DC    18F'0'
+SAVE13   DS    A
+SAVE14   DS    A
 REQ      DS    A
          LTORG
          END
