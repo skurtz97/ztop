@@ -2,7 +2,6 @@
 # ^ our linter reads this as shell: `NAME = value` and `$(CFLAGS)` are make.
 .POSIX:
 .SUFFIXES:
-.SUFFIXES: .c .s .o
 
 # ztop - what VSM has allocated, by subpool.
 #
@@ -41,11 +40,12 @@ ztop: src/ztop.c $(OBJ)
 # as if it were EBCDIC ("SYNAD ... WRONG LEN RECRD").  Tag it as ASCII,
 # and keep every statement inside column 71: column 72 is the
 # continuation mark, and a long comment turns the next line into one.
-.s.o:
-	chtag -t -c ISO8859-1 $<
-	@awk 'length > 71 { print FILENAME ":" NR ": past column 71"; bad = 1 } \
-	      END { exit bad }' $<
-	$(AS) -o $@ $<
+# An explicit rule, not .s.o: z/OS make is happy with those and spins on
+# a suffix rule for a file in a subdirectory.
+src/zvslist.o: src/zvslist.s
+	chtag -t -c ISO8859-1 src/zvslist.s
+	@awk 'length > 71 { print FILENAME ":" FNR ": past column 71"; bad = 1 } END { exit bad }' src/zvslist.s
+	$(AS) -o src/zvslist.o src/zvslist.s
 
 # A relink drops the APF bit, so run this after every build.
 apf: ztop
