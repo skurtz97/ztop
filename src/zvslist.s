@@ -19,7 +19,7 @@
 * and the first store into it takes a 0C4.  Only the base register and
 * the literal pool stay here, and both are read-only.
 *
-* SPACE=ALLOC and LOC=31 are the macro defaults.  LINKAGE=BRANCH is
+* SPACE=ALLOC and LOC=31 are the macro defaults.  LINKAGE=SVC is
 * used rather than the default SYSTEM: the PC-number path through
 * CVT+772/+88 branches off to a bad address here, the branch entry
 * does not.
@@ -58,13 +58,13 @@ zvslist  RMODE 24
          CHI   3,4
          BE    PVT
          B     OUT
-CSA      VSMLIST SP=CSA,WKAREA=((4),5),LINKAGE=BRANCH
+CSA      VSMLIST SP=CSA,WKAREA=((4),5),LINKAGE=SVC
          B     DONE
-SQA      VSMLIST SP=SQA,WKAREA=((4),5),LINKAGE=BRANCH
+SQA      VSMLIST SP=SQA,WKAREA=((4),5),LINKAGE=SVC
          B     DONE
-LSQA     VSMLIST SP=LSQA,WKAREA=((4),5),LINKAGE=BRANCH
+LSQA     VSMLIST SP=LSQA,WKAREA=((4),5),LINKAGE=SVC
          B     DONE
-PVT      VSMLIST SP=PVT,WKAREA=((4),5),LINKAGE=BRANCH
+PVT      VSMLIST SP=PVT,WKAREA=((4),5),LINKAGE=SVC
 DONE     L     2,16(,13)              self, from our save area's block
          L     4,8(2)                 work area
          L     15,0(4)               service return code
