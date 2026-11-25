@@ -32,7 +32,7 @@ ZTSTK    RMODE 24
          L     4,8(2)                 work area address
          XC    0(4,4),0(4)            return code zero before the call
          LHI   15,-1
-         ST    15,12(2)               unknown area until proven otherwise
+         ST    2,REQ                  remember it, macro clobbers
          C     3,=F'1'
          BE    CSA
          C     3,=F'2'
