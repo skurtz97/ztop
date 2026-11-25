@@ -22,7 +22,9 @@ ztop: src/ztop.c $(OBJ)
 # as if it were EBCDIC ("SYNAD ... WRONG LEN RECRD").  Tag it as ASCII.
 src/zvslist.o: src/zvslist.s
 	chtag -t -c ISO8859-1 src/zvslist.s
-	$(AS) -o $@ src/zvslist.s
+	@awk 'length > 71 { print FILENAME ":" NR ": longer than column 71"; bad = 1 } \
+	      END { exit bad }' $<
+	$(AS) -o $@ $<
 
 check: ztop
 	./ztop
