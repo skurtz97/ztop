@@ -19,6 +19,10 @@
 * and the first store into it takes a 0C4.  Only the base register and
 * the literal pool stay here, and both are read-only.
 *
+* VSMLIST writes its control block into the first 32 bytes of the work
+* area and needs the register operand in doubled parentheses: with
+* WKAREA=(4,5) the macro generates "LA 1,4" and stores at address 12.
+*
 * The offsets below are shared with src/ztop.c and checked there.
          SYSSTATE AMODE64=NO,ARCHLVL=2,OSREL=ZOSV1R6
 zvslist  CSECT
@@ -49,13 +53,13 @@ zvslist  RMODE 24
          CHI   3,4
          BE    PVT
          B     OUT
-CSA      VSMLIST SP=CSA,WKAREA=(4,5),SPACE=ALLOC,LOC=31
+CSA      VSMLIST SP=CSA,WKAREA=((4),5),SPACE=ALLOC,LOC=31
          B     DONE
-SQA      VSMLIST SP=SQA,WKAREA=(4,5),SPACE=ALLOC,LOC=31
+SQA      VSMLIST SP=SQA,WKAREA=((4),5),SPACE=ALLOC,LOC=31
          B     DONE
-LSQA     VSMLIST SP=LSQA,WKAREA=(4,5),SPACE=ALLOC,LOC=31
+LSQA     VSMLIST SP=LSQA,WKAREA=((4),5),SPACE=ALLOC,LOC=31
          B     DONE
-PVT      VSMLIST SP=PVT,WKAREA=(4,5),SPACE=ALLOC,LOC=31
+PVT      VSMLIST SP=PVT,WKAREA=((4),5),SPACE=ALLOC,LOC=31
 DONE     L     2,16(,13)              self, from our save area's block
          L     4,8(2)                 work area
          L     15,0(4)               service return code
