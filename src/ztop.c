@@ -138,17 +138,9 @@ int main(int argc, char **argv) {
     }
 
     struct zreq req = {.area = area, .len = WORK, .wk = work, .rc = -1};
-    int stub = zvslist(&req);
-    if (stub != 0) {
-        fprintf(stderr, "ztop: the stub returned %d for area %d (auth %d)\n",
-                stub, area, req.auth);
-        return 2;
-    }
-    if (req.auth != 0) {
-        fprintf(stderr, "ztop: not APF-authorized (TESTAUTH %d): VSMLIST "
-                        "needs extattr +a and AC(1)\n", req.auth);
-        return 1;
-    }
+    /* The stub's return value is not usable through OS linkage; req.rc
+     * is what tells whether the service ran. */
+    (void)zvslist(&req);
     if (req.rc != 0) {
         fprintf(stderr, "ztop: VSMLIST returned %d\n", req.rc);
         return 1;

@@ -44,11 +44,6 @@ zvslist  RMODE 24
          ST    10,8(,13)
          LR    13,10
          ST    2,16(,2)              self, for the caller's information
-         TESTAUTH FCTN=1            is this task authorized at all
-         LR    2,11                 TESTAUTH owns R0, R1 and R15
-         ST    15,168(,2)           auth code: 0 = authorized
-         LTR   15,15
-         BNZ   OUT                  not authorized, skip the call
          L     3,0(2)                 area
          L     5,4(2)                 work area length
          L     4,8(2)                 work area address
