@@ -9,34 +9,34 @@ the only documented interface that reports allocated storage by subpool for
 CSA, SQA, LSQA and the private area.  Per subpool it returns the 4K-multiple
 blocks that hold allocations and the bytes allocated inside them.
 
-## Authorization: unresolved, and the real blocker
+## Authorization: APF, by design
 
-The reference gives the caller requirement as problem state, PSW key 8-15,
-`LINKAGE=SYSTEM`, AMODE 24 or 31 -- an ordinary user task -- and that is what
-this design was built on.  The field evidence says otherwise so far, on
-z/OS 3.1 (29.00):
+This is an administrator's utility, so it is APF-authorized and uses
+`VSMLIST` with `LINKAGE=SYSTEM`, the path the reference opens to an
+authorized program (problem state, PSW key 8-15, `LINKAGE=BRANCH` would
+want supervisor state and key 0 and is not used).
 
-- `LINKAGE=SYSTEM` (the default): `Possible Bad Branch`.  The macro's
-  PC-number path is `L 15,16(0,0)` (CVT), `L 15,772(,15)` (SVT), `L 15,88(,15)`,
-  `PC 0(15)`; the value it branches through does not lead to code here.
-- `LINKAGE=BRANCH`: operation exception (0C1) at the branch entry from
-  `CVT+1140`, which matches the reference's "supervisor state and PSW key 0"
-  for that option, so this one is behaving as documented.
-- `LINKAGE=SVC` (SVC 72): protection exception (0C4) inside the service.
+Measured once without APF, on z/OS 3.1 (29.00), before the decision, and
+kept here so nobody repeats it:
 
-So the one path the reference opens to an unauthorized task has not been made
-to work yet, and the others are refused exactly as documented.  Until someone
-confirms otherwise, treat VSMLIST as authorized-only: no further calls from an
-ordinary user task on the shared system, and no request for APF or key
-changes without the operator's agreement.
+- `LINKAGE=SYSTEM`: `Possible Bad Branch` through the macro's PC-number path
+  (`L 15,16(0,0)` CVT, `+772` SVT, `+88`, `PC 0(15)`).
+- `LINKAGE=BRANCH`: 0C1 at the `CVT+1140` branch entry, which is what the
+  reference promises for supervisor-state-only.
+- `LINKAGE=SVC` (SVC 72): 0C4 inside the service.
 
-What an authorized route would look like, cheapest first:
+What the installation needs, none of it in the tool:
 
-- a small APF-authorized helper in a system library that the ordinary tool
-  invokes and whose output it reads;
-- `mvscmdauth` (ZOAU) running an authorized program;
-- the operator path: `D VSMLIST`-style console output through `opercmd`,
-  which needs OPERCMDS.
+- an APF-listed load path.  `D PROG,APF` on CBT lists 54 entries and every
+  one is a partitioned data set -- no HFS directory is APF-authorized, so
+  one has to be added (PROGxx `APF ADD DSNAME('/some/dir')`, or
+  `SETPROG APF,ADD,DSNAME=...` at runtime) before an executable in the z/OS
+  UNIX file system can be marked;
+- `extattr +ap` on the executable that lives there;
+- a review of the program itself, because everything it does now runs with
+  the installation's authority.  ztop only reads VSM data and writes to
+  standard output; it must not grow a feature that takes a path, a command
+  or a name from an untrusted caller without stripping authority first.
 
 ## What ZOAU already provides
 
