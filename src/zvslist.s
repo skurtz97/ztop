@@ -58,13 +58,13 @@ zvslist  RMODE 24
          CHI   3,4
          BE    PVT
          B     OUT
-CSA      VSMLIST SP=CSA,WKAREA=((4),5),LINKAGE=SVC
+CSA      VSMLIST SP=CSA,WKAREA=((4),5)
          B     DONE
-SQA      VSMLIST SP=SQA,WKAREA=((4),5),LINKAGE=SVC
+SQA      VSMLIST SP=SQA,WKAREA=((4),5)
          B     DONE
-LSQA     VSMLIST SP=LSQA,WKAREA=((4),5),LINKAGE=SVC
+LSQA     VSMLIST SP=LSQA,WKAREA=((4),5)
          B     DONE
-PVT      VSMLIST SP=PVT,WKAREA=((4),5),LINKAGE=SVC
+PVT      VSMLIST SP=PVT,WKAREA=((4),5)
 DONE     L     2,16(,13)              self, from our save area's block
          L     4,8(2)                 work area
          L     15,0(4)               service return code
