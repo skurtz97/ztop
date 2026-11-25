@@ -19,6 +19,11 @@
 * and the first store into it takes a 0C4.  Only the base register and
 * the literal pool stay here, and both are read-only.
 *
+* SPACE=ALLOC and LOC=31 are the macro defaults.  LINKAGE=BRANCH is
+* used rather than the default SYSTEM: the PC-number path through
+* CVT+772/+88 branches off to a bad address here, the branch entry
+* does not.
+*
 * VSMLIST writes its control block into the first 32 bytes of the work
 * area and needs the register operand in doubled parentheses: with
 * WKAREA=(4,5) the macro generates "LA 1,4" and stores at address 12.
@@ -53,13 +58,13 @@ zvslist  RMODE 24
          CHI   3,4
          BE    PVT
          B     OUT
-CSA      VSMLIST SP=CSA,WKAREA=((4),5),SPACE=ALLOC,LOC=31
+CSA      VSMLIST SP=CSA,WKAREA=((4),5),LINKAGE=BRANCH
          B     DONE
-SQA      VSMLIST SP=SQA,WKAREA=((4),5),SPACE=ALLOC,LOC=31
+SQA      VSMLIST SP=SQA,WKAREA=((4),5),LINKAGE=BRANCH
          B     DONE
-LSQA     VSMLIST SP=LSQA,WKAREA=((4),5),SPACE=ALLOC,LOC=31
+LSQA     VSMLIST SP=LSQA,WKAREA=((4),5),LINKAGE=BRANCH
          B     DONE
-PVT      VSMLIST SP=PVT,WKAREA=((4),5),SPACE=ALLOC,LOC=31
+PVT      VSMLIST SP=PVT,WKAREA=((4),5),LINKAGE=BRANCH
 DONE     L     2,16(,13)              self, from our save area's block
          L     4,8(2)                 work area
          L     15,0(4)               service return code
