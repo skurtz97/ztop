@@ -64,27 +64,29 @@ ztop                    full-screen view when stdout is a terminal,
                         else one-shot CSA
 ztop -a sqa             SQA, -a lsqa, -a pvt
 ztop -a csa,pvt         several areas
-ztop -s                 system name, host, release, address-space count
+ztop -s                 system, IPL, real storage, address-space count
 ztop -j                 one line per address space
+ztop -p                 auxiliary storage and page data sets
 ztop -x                 dump the raw VSMLIST work and data areas
-ztop -d [seconds]       interactive, 2 s refresh (1..60)
+ztop -d [seconds]       interactive, 10 s refresh (1..60)
 ```
 
 With a terminal and no report option, `ztop` starts the full-screen view.
 Anything that selects a report (`-a`, `-s`, `-j`, `-x`) or pipes the output
 gets the one-shot text instead, suitable for `grep` and for a shell
-prompt.  There are three views, selected with `TAB`:
+prompt.  There are four views, selected with `TAB`:
 
 | view | |
 | --- | --- |
 | STORAGE | CSA, SQA, LSQA and the private area, one table per area |
-| SYSTEM | CVT system name, host, release, machine, address-space count |
+| SYSTEM | system and host, IPL date and time, real storage, address spaces |
 | JOBS | ASID, job name and ASCB address for every address space |
+| PAGING | auxiliary storage flags and the page data sets from ASMVT |
 
 | key | |
 | --- | --- |
 | `TAB`, `Shift-TAB`, click a tab | next / previous view |
-| `1`..`4` | inside STORAGE: CSA, SQA, LSQA, private |
+| `1`..`4` | in STORAGE: CSA, SQA, LSQA, private; elsewhere: switch view |
 | `p` | pause/resume refresh |
 | `r` | collect now |
 | `+`/`-` | refresh 1..60 s |
@@ -103,8 +105,8 @@ sources are what they are, is in [DESIGN.md](DESIGN.md).
 ## What it is not
 
 A snapshot, not an accounting tool: no history, no per-job attribution, no
-SMF.  CSA has a total because `VSMLIST` returns the unallocated holes as
-well; SQA, LSQA and the private area do not, so those views show
+SMF.  CSA and the private area have a total because `VSMLIST` returns
+their unallocated holes as well; SQA and LSQA do not, so those views show
 used/free/mapped and no percentage.  The jobs view does not show CPU time:
 `ASCBEJST` does not advance while a process burns CPU (measured), so a
 column built on it would lie.

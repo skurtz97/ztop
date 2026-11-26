@@ -138,6 +138,18 @@ the terminal and is not used.
 CPU time is deliberately absent: `ASCBEJST` did not advance while a test
 process burned 0.88 s of CPU (measured on CBT), so it is not a live field.
 
+The IPL data comes from the SMCA (`CVTSMCA`, CVT+0xC4): `SMCAIDTE` at +340
+is packed decimal `0CYYDDDF` and `SMCAITME` at +336 is binary hundredths of
+a second.  Both are decoded by `zipl_decode` in `src/sys.c` and checked
+against `D IPLINFO` (2026-09-21 17:02:47).  `CVTRLSTG` (CVT+0x358) is real
+storage in K at IPL; it is accurate below 4 TB and is a sentinel above.
+
+The private area gets the same unallocated pass as CSA, so its total and
+percentage are shown; SQA and LSQA are not asked for unallocated blocks,
+and their totals are not knowable this way.  The paging view reads ASMVT
+(`CVTASMVT`, CVT+0x2C0) for the common and PLPA page data sets' flags and
+the VIO journal count; it does not read the data-set names yet.
+
 ## The terminal
 
 `tui/` is a small library, not a curses replacement: a cell buffer with a
@@ -154,6 +166,12 @@ cells, and `tui_tabs_hit` answers which tab a column belongs to, so the
 application decides what a click means.  Commands and subscriptions are not modelled:
 a tick message and a return value saying "redraw" are enough here, and a
 `Cmd` type in C would be a function pointer by another name.
+
+`make leakcheck` runs every report mode under the Language Environment
+storage report and compares the heaps against each other rather than
+against their own free counts: LE's own storage is never freed, so the
+sensitive comparison is that mode A ends with the same heap as mode B.
+All modes currently end at 12 gets, 0 frees and 17776 bytes in use.
 
 The buffer keeps one screen of cells and one of what is already on the
 glass, and writes only the runs that differ, with one style change per
