@@ -353,20 +353,20 @@ static int cmp_job(const void *pa, const void *pb) {
 }
 
 static const struct tui_col storage_cols[] = {
-    {"SP", 3, true},       {"KY", 3, true},        {"BLKS", 6, true},
+    {"SP", 3, true},       {"KY", 3, true},        {"BLKS", 8, true},
     {"USED", 10, true},    {"FREE", 10, true},     {"MAPPED", 10, true},
     {"LARGEST", 10, true}, {"ADDRESS", 17, false},
 };
 
 static const struct tui_col pvt_cols[] = {
-    {"SP", 3, true},       {"KY", 3, true},    {"BLKS", 5, true},
+    {"SP", 3, true},       {"KY", 3, true},    {"BLKS", 7, true},
     {"USED", 10, true},    {"FREE", 10, true}, {"MAPPED", 10, true},
     {"LARGEST", 10, true}, {"TCB", 9, false},
 };
 
 static const struct tui_col job_cols[] = {
-    {"ASID", 4, true},
-    {"JOB", 8, false},
+    {"ASID", 6, true},
+    {"JOB", 9, false},
     {"ASCB", 10, false},
 };
 
