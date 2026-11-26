@@ -1,35 +1,67 @@
 # ztop
 
-How much storage is in each area of a z/OS system, from a z/OS UNIX shell.
+How much storage is in each area of a z/OS system -- CSA, SQA, LSQA, and
+the private area -- from a z/OS UNIX shell over SSH.
 
-```
-subpool      bytes   blocks
-227        1048576       12
-231       16777216       41
-total     17825792
+```text
+subpool  key  blocks        used        free      mapped     largest     address
+227        8      12     1048576      196608     1245184     1048576  00A00000-00B30000
+231        8      41    16777216     2097152    18874368     4194304  00C00000-02C00000
+CSF total: 17825792 bytes, 17121280 mapped (96.2% of mapped+unallocated)
 ```
 
-The numbers come from `VSMLIST`, the interface z/OS offers an ordinary
-user task (problem state, key 8, `LINKAGE=SYSTEM`) for exactly this.  It
-is an assembler macro with no C equivalent, so `src/zvslist.s` issues it
-and `src/ztop.c` parses and formats the answer.
+The numbers come from `VSMLIST`, the interface z/OS offers an authorized
+program for exactly this.  It is an assembler macro with no C equivalent, so
+`src/zvslist.s` issues it and `src/vsm.c` parses the answer; `src/tui.c` is
+the terminal layer and `src/ztop.c` is the command.
 
 ## Build
 
-z/OS only, with IBM Open XL and HLASM in the path:
+z/OS only for the real binary, with IBM Open XL and HLASM in the path:
 
 ```sh
 make          # ibm-clang -std=c23 -m32, plus `as` for src/zvslist.s
-./ztop        # CSA
-./ztop -a sqa # SQA, -a lsqa, -a pvt, -x dumps the raw work area
+make apf      # then give the executable the APF bit
 ```
 
-On Linux `make` stops with a message: this tree is kept there as a backup
-copy, not to build.  Keep the two in step with `git` -- one repository,
-cloned in `~/src/ztop` on both machines.
+The parser and the TUI framework have no z/OS dependency, so on any host
+with a C compiler and a terminal:
 
-## What it is not yet
+```sh
+make test     # synthetic VSMLIST data areas, no z/OS needed
+make demo     # a small exercise of the TUI framework
+```
 
-A snapshot, not a monitor: no refresh loop, no `%`-of-limit column, no
-per-TCB private breakdown.  [DESIGN.md](DESIGN.md) says what comes next and
-why the data source is what it is.
+## Use
+
+```text
+ztop                    one-shot CSA
+ztop -a sqa             SQA, -a lsqa, -a pvt
+ztop -a csa,pvt         several areas
+ztop -x                 dump the raw work area of the first call
+ztop -d [seconds]       interactive, 2 s refresh (1..60)
+```
+
+Without `-d` the exact bytes of the answer go to standard output, suitable
+for `grep` and for a shell prompt.  With `-d` there is a full-screen view:
+
+| key | |
+| --- | --- |
+| `1`..`4` | CSA, SQA, LSQA, private |
+| `a` | all four areas |
+| `p` | pause/resume refresh |
+| `r` | collect now |
+| `+`/`-` | refresh 1..60 s |
+| `j`/`k`, `PgUp`/`PgDn`, `g`/`G` | scroll a subpool list |
+| `?` | help |
+| `q` | quit |
+
+The design, including why the data source is what it is and what is not
+verified on z/OS, is in [DESIGN.md](DESIGN.md).
+
+## What it is not
+
+A snapshot, not an accounting tool: no history, no per-job attribution, no
+SMF.  CSA has a total because `VSMLIST` returns the unallocated holes as
+well; SQA, LSQA and the private area do not, so those views show
+used/free/mapped and no percentage.

@@ -86,18 +86,69 @@ C23 for every project from here on: `-std=c23`, `constexpr`, `bool`,
 `nullptr`, `__attribute__((aligned))` where it matters.  IBM Open XL 2.2
 (clang 21) accepts `-std=c23`.
 
+## The shape of the answer
+
+`VSMLIST` fills a caller-supplied work area.  The first 32 bytes are a
+control block: return code at 0, then the address (4) and length (8) of a
+data area placed after it.  The data area is in MVS byte order, so
+`src/vsm.c` reads it big-endian and never casts.
+
+The stream is a count followed by fixed 8-byte address/length pairs, at
+every level: number of subpools, then per subpool an 8-byte descriptor
+(format, descriptor length, subpool id, flags, owning TCB in the private
+area), then a block count and the blocks.  With `SPACE=FREE` each allocated
+block is followed by a free-descriptor count and the free extents inside
+it; allocated bytes are the block length minus those free extents.  With
+`SPACE=UNALLOC` the stream is regions, and inside each region the holes.
+
+The call is a continuation: return code 4 means "did not fit, issue the
+same call with the same work area again", and each call reports only its
+own piece.  The return code at work+0 must be zero before the first call
+and left untouched between the continuation calls; clearing it each time
+restarts the request and never finishes.  `src/vsm.c` therefore merges the
+pieces until the service reports zero, and `ztop -x` dumps the header and
+the first bytes of each piece.
+
+What `VSMLIST` does not return is the area size.  CSA can still be shown as
+a percentage because the unallocated request returns the holes, so
+footprint plus holes is the mapped extent; SQA, LSQA and the private area
+have no such request and show used, free and mapped without a total.
+
+## The terminal
+
+A cell buffer and a diff flush, not curses.  ncurses brings its own
+terminfo database, which is another thing to install and keep in step on
+every z/OS system, and its output is a stream of absolute cursor motion
+anyway.  `src/tui.c` keeps one screen of cells and one of what is already
+on the glass, and writes only the runs that differ, with one style change
+per run.  No Unicode: the box and the bar are `+`, `-`, `|`, `#`, because
+the terminal path is an EBCDIC-to-ASCII conversion that is not a charset
+translation.
+
+Three z/OS details are load-bearing:
+
+- The escape character in the source has to be EBCDIC X'27'.  The tty
+  converts EBCDIC to ASCII on output, so a C `"\x1b"` arrives as X'8F';
+  X'27' arrives as the ESC the terminal expects.  `src/tui.c` picks the
+  byte with `#ifdef __MVS__`; input is not converted, so keys arrive as
+  EBCDIC and are mapped there too.
+- `TIOCGWINSZ` succeeds with zero columns and rows.  The size comes from a
+  cursor-position report (`ESC[6n`, answer `ESC[row;colR`) with a timeout,
+  then `COLUMNS`/`LINES`, then 80x24.  `SIGWINCH` is handled where the
+  system sends it.
+- `-D_XOPEN_SOURCE=500 -D_POSIX_C_SOURCE=200112L` is what exposes termios,
+  `select` and `clock_gettime` in the z/OS headers; `nanosleep` and `usleep`
+  are not declared, so the refresh wait is `select`.
+
 ## Open
 
-- The work-area layout.  The reference describes the descriptor stream in
-  figures whose byte tables do not survive the documentation conversion, so
-  `src/ztop.c` walks it with a plausibility check and `-x` dumps the raw
-  bytes.  Next: confirm the framing against a dump on a live system, then
-  replace the guess with the real rule.
-
-  shortcut: the stream is scanned for a X'00' format byte, a sane length and
-  a subpool id; a mis-parse shows up as an impossible subpool or a wild byte
-  count, and `-x` is the way to see it.
-- A refresh loop (`-d`, `-n`) and a `%`-of-area column need the area sizes,
-  which VSMLIST does not return (it reports allocation, not the limit).
-- `SP=PVT` output is grouped by owning TCB, which needs a different
-  walk from the per-area one.
+- Live confirmation.  The parser follows the documented layout and is
+  covered by synthetic data areas in `tests/test_vsm.c`, but no real
+  `VSMLIST` answer has been parsed yet: the executable is APF-marked and
+  still abends SC78 R=90 because no HFS directory is APF-listed.  The
+  first run on an authorized system is the acceptance test for the framing.
+- Area sizes for SQA, LSQA and the private area.  `VSMLIST` reports
+  allocation and free space, not the limit; a percentage there needs a
+  different source, and none is planned.
+- `SP=PVT` output is already grouped by owning TCB, but the view still
+  prints one list; per-TCB folding is a display change, not a data change.

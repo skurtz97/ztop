@@ -21,21 +21,29 @@
 
 CC      = ibm-clang
 AS      = as
-CFLAGS  = -std=c23 -O2 -m32 -Wall -Wextra -Wshadow -Wpedantic
+CFLAGS  = -std=c23 -O2 -m32 -Wall -Wextra -Wshadow -Wpedantic \
+          -D_XOPEN_SOURCE=500 -D_POSIX_C_SOURCE=200112L
+# The parser and the TUI framework have no z/OS dependency; the test and
+# demo targets build them on the host so a Linux tree can check them.
+TESTCC  = cc
+TESTFLAGS = -std=c17 -g -O1 -Wall -Wextra -Wshadow -Wpedantic \
+            -D_XOPEN_SOURCE=500 -D_POSIX_C_SOURCE=200112L
 # AC(1) is half of what makes an executable APF-authorized, the other
 # half being the APF bit on the file (make apf).  Quoted: the z/OS shell
 # reads `(` in an unquoted word as a syntax error.
 LDFLAGS = -Wl,'-bAC(1)'
 
 OBJ = src/zvslist.o
+SRC = src/ztop.c src/vsm.c src/tui.c
+HDR = src/vsm.h src/tui.h
 
 all:
 	@(uname -s | grep OS/390 > /dev/null) || \
 	    { echo "ztop builds only on z/OS; this tree is a backup copy"; exit 1; }
 	$(MAKE) ztop
 
-ztop: src/ztop.c $(OBJ)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ src/ztop.c $(OBJ)
+ztop: $(SRC) $(HDR) $(OBJ)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRC) $(OBJ)
 
 # The assembler reads HFS source through the file's coded character set
 # tag; a git checkout arrives tagged UTF-8 and HLASM then reads the file
@@ -59,5 +67,13 @@ check: ztop
 	./ztop -a sqa
 	./ztop -a pvt
 
+# Portable checks: no VSMLIST, no terminal.
+test: tests/test_vsm.c src/vsm.c src/vsm.h
+	$(TESTCC) $(TESTFLAGS) -o tests/test_vsm tests/test_vsm.c src/vsm.c
+	./tests/test_vsm
+
+demo: tests/demo_tui.c src/tui.c src/tui.h
+	$(TESTCC) $(TESTFLAGS) -o tests/demo_tui tests/demo_tui.c src/tui.c
+
 clean:
-	rm -f ztop $(OBJ)
+	rm -f ztop $(OBJ) tests/test_vsm tests/demo_tui

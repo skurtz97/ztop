@@ -6,11 +6,12 @@
 * holding the address of the request block.
 *
 *   struct zreq { int area; unsigned len; void *wk; int rc;
-*                 void *self; unsigned long long save[18]; int auth; }
+*                 void *self; unsigned long long save[18]; int space; }
 *
-* area 1 CSA, 2 SQA, 3 LSQA, 4 private; len is the work area length;
-* rc receives the service's return code (0 complete, 4 "did not fit,
-* ask again", anything else is an error).
+* area 1 CSA, 2 SQA, 3 LSQA, 4 private; space 1 FREE (allocated storage
+* and the free space inside it), 2 UNALLOC (holes in CSA or the private
+* area); len is the work area length; rc receives the service's own
+* return code (0 complete, 4 "did not fit, ask again", else an error).
 *
 * Returns 0 if the service was called, -1 for an unknown area.
 *
@@ -19,14 +20,17 @@
 * and the first store into it takes a 0C4.  Only the base register and
 * the literal pool stay here, and both are read-only.
 *
-* SPACE=ALLOC and LOC=31 are the macro defaults.  LINKAGE=SVC is
-* used rather than the default SYSTEM: the PC-number path through
-* CVT+772/+88 branches off to a bad address here, the branch entry
-* does not.
+* LINKAGE=SVC is used rather than the default SYSTEM: the PC-number
+* path through CVT+772/+88 branches off to a bad address here, the
+* branch entry does not.
 *
 * VSMLIST writes its control block into the first 32 bytes of the work
 * area and needs the register operand in doubled parentheses: with
 * WKAREA=(4,5) the macro generates "LA 1,4" and stores at address 12.
+*
+* The return code at work+0 is the service's own state: it must be zero
+* before the first call, and left alone for the continuation calls.
+* The C side clears it once, before the loop; the stub must not.
 *
 * The offsets below are shared with src/ztop.c and checked there.
          SYSSTATE AMODE64=NO,ARCHLVL=2,OSREL=ZOSV1R6
@@ -47,7 +51,7 @@ zvslist  RMODE 24
          L     3,0(2)                 area
          L     5,4(2)                 work area length
          L     4,8(2)                 work area address
-         XC    0(4,4),0(4)            return code zero before the call
+         L     6,168(2)              space: 1 FREE, 2 UNALLOC
          LHI   15,-1
          ST    15,12(2)              unknown area until proven
          CHI   3,1                   the area codes are small
@@ -59,13 +63,21 @@ zvslist  RMODE 24
          CHI   3,4
          BE    PVT
          B     OUT
-CSA      VSMLIST SP=CSA,WKAREA=((4),5)
+CSA      CHI   6,2
+         BE    CSAU
+         VSMLIST SP=CSA,WKAREA=((4),5)
+         B     DONE
+CSAU     VSMLIST SP=CSA,SPACE=UNALLOC,WKAREA=((4),5)
          B     DONE
 SQA      VSMLIST SP=SQA,WKAREA=((4),5)
          B     DONE
 LSQA     VSMLIST SP=LSQA,WKAREA=((4),5)
          B     DONE
-PVT      VSMLIST SP=PVT,WKAREA=((4),5)
+PVT      CHI   6,2
+         BE    PVTU
+         VSMLIST SP=PVT,WKAREA=((4),5)
+         B     DONE
+PVTU     VSMLIST SP=PVT,SPACE=UNALLOC,WKAREA=((4),5)
 DONE     LR    2,11                 the struct, kept in R11
          L     4,8(2)                 work area
          L     15,0(4)               service return code
