@@ -66,18 +66,10 @@ enum {
     TUI_KEY_RESIZE,
     TUI_KEY_TAB,
     TUI_KEY_BACKTAB,
-    TUI_KEY_MOUSE,
 };
 
 #define TUI_MAX_W 500
 #define TUI_MAX_H 200
-
-/** @brief One mouse event; coordinates are 0-based cells. */
-struct tui_mouse {
-    int x, y;
-    int button; /**< 0 left, 1 middle, 2 right, 64 wheel up, 65 wheel down */
-    bool release;
-};
 
 struct tui {
     int w, h;
@@ -91,7 +83,6 @@ struct tui {
     int inlen;
     char out[32768];
     int olen;
-    struct tui_mouse mouse;
 };
 
 bool tui_alloc(struct tui *t, int w, int h);
@@ -118,13 +109,12 @@ int tui_key(struct tui *t, int timeout_ms);
 
 /* ---- messages and the application loop ------------------------------- */
 
-enum tui_msg_type { TUI_MSG_KEY, TUI_MSG_RESIZE, TUI_MSG_TICK, TUI_MSG_MOUSE };
+enum tui_msg_type { TUI_MSG_KEY, TUI_MSG_RESIZE, TUI_MSG_TICK };
 
 struct tui_msg {
     enum tui_msg_type type;
-    int key;                /**< TUI_MSG_KEY: a byte or one of TUI_KEY_* */
-    int w, h;               /**< TUI_MSG_RESIZE: the new size */
-    struct tui_mouse mouse; /**< TUI_MSG_MOUSE */
+    int key;  /**< TUI_MSG_KEY: a byte or one of TUI_KEY_* */
+    int w, h; /**< TUI_MSG_RESIZE: the new size */
 };
 
 struct tui_app {
@@ -182,9 +172,6 @@ bool tui_table_key(struct tui_table *tb, int key, int rows, int height);
 /** A row of tabs; returns the x just past the last one. */
 int tui_tabs_draw(struct tui *t, int x, int y, const char *const *labels, int n,
                   int active);
-
-/** @brief Which tab covers cell @p x, or -1.  Tabs start at column 0. */
-int tui_tabs_hit(int x, const char *const *labels, int n);
 
 /** Cycle tabs with left/right/tab/backtab; true when it was consumed. */
 bool tui_tabs_key(int key, int *active, int n);
