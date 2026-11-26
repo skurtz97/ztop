@@ -624,7 +624,7 @@ void tui_run(struct tui *t, struct tui_app *app) {
             m.type = TUI_MSG_KEY;
             m.key = k;
         }
-        if (app->update(app->model, &m)) {
+        if (app->update(app, &m)) {
             app->view(app->model, t);
             tui_flush(t);
         }

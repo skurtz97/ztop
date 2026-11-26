@@ -65,7 +65,7 @@ enum {
     TUI_KEY_DEL,
     TUI_KEY_RESIZE,
     TUI_KEY_TAB,
-    TUI_KEY_BACKTAB
+    TUI_KEY_BACKTAB,
 };
 
 #define TUI_MAX_W 500
@@ -121,7 +121,7 @@ struct tui_app {
     void *model;
     /** Handle a message.  Returns true when the screen must be redrawn.
      *  Set @c quit to leave the loop. */
-    bool (*update)(void *model, const struct tui_msg *m);
+    bool (*update)(struct tui_app *app, const struct tui_msg *m);
     /** Draw the model into the buffer. */
     void (*view)(void *model, struct tui *t);
     int tick_ms; /**< 0 = no tick messages */

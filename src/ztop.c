@@ -267,7 +267,6 @@ struct app {
     int collect_ms;
     bool paused;
     bool help;
-    bool quit;
     int tab;
     int sub;
     struct tui_table storage;
@@ -578,8 +577,8 @@ static void usage(FILE *f) {
         "  -h  this text\n");
 }
 
-static bool update(void *model, const struct tui_msg *m) {
-    struct app *a = model;
+static bool update(struct tui_app *app, const struct tui_msg *m) {
+    struct app *a = app->model;
     int rows, height;
 
     if (a->help) {
@@ -599,7 +598,7 @@ static bool update(void *model, const struct tui_msg *m) {
         return false;
 
     if (m->key == 'q' || m->key == TUI_KEY_ESC || m->key == 0x03) {
-        a->quit = true;
+        app->quit = true;
         return false;
     }
     if (m->key == '?') {
