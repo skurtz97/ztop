@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -770,13 +771,21 @@ void tui_table_draw(struct tui *t, tui_rect r, const struct tui_table *tb,
     tui_fill(t, r.x, r.y, r.w, 1, ' ', TUI_LABEL);
     for (int c = 0; c < tb->ncols && x < r.x + r.w; c++) {
         int w = tb->cols[c].width;
+        char up[32];
+        size_t n;
 
         if (w > r.x + r.w - x)
             w = r.x + r.w - x;
+        n = strlen(tb->cols[c].title);
+        if (n >= sizeof up)
+            n = sizeof up - 1;
+        for (size_t k = 0; k < n; k++)
+            up[k] = (char)toupper((unsigned char)tb->cols[c].title[k]);
+        up[n] = '\0';
         if (tb->cols[c].right)
-            tui_printf(t, x, r.y, w, TUI_LABEL, "%*s", w, tb->cols[c].title);
+            tui_printf(t, x, r.y, w, TUI_LABEL, "%*s", w, up);
         else
-            tui_printf(t, x, r.y, w, TUI_LABEL, "%-*s", w, tb->cols[c].title);
+            tui_printf(t, x, r.y, w, TUI_LABEL, "%-*s", w, up);
         x += tb->cols[c].width;
         if (c + 1 < tb->ncols)
             x += 1;

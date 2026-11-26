@@ -522,8 +522,11 @@ static void draw_header(struct tui *t, const struct app *a) {
     tui_printf(t, 1, 0, 7, TUI_KEYCAP, " ztop ");
     tui_printf(t, 7, 0, 8, TUI_META, " %s", ZTOP_VERSION);
     tui_printf(t, 15, 0, t->w - 40, TUI_PLAIN, " %s", a->host);
-    (void)snprintf(right, sizeof right, "collect %dms   %s", a->collect_ms,
-                   now);
+    if (a->collect_ms > 0)
+        (void)snprintf(right, sizeof right, "collect %dms   %s", a->collect_ms,
+                       now);
+    else
+        (void)snprintf(right, sizeof right, "collect <1ms   %s", now);
     tui_printf(t, t->w - 1 - (int)strlen(right), 0, (int)strlen(right),
                TUI_PLAIN, "%s", right);
     if (a->paused)
@@ -581,15 +584,15 @@ static void draw_storage(struct tui *t, struct app *a) {
     human(v->foot, mapped, sizeof mapped);
     if (v->area == VSM_CSA && v->unalloc_valid) {
         human(v->foot + v->unalloc, total, sizeof total);
-        (void)snprintf(pcbuf, sizeof pcbuf, "%d%%", p);
+        (void)snprintf(pcbuf, sizeof pcbuf, "use %d%%", p);
     } else {
         (void)snprintf(total, sizeof total, "-");
-        (void)snprintf(pcbuf, sizeof pcbuf, "-");
+        (void)snprintf(pcbuf, sizeof pcbuf, "use -");
     }
     tui_printf(t, 1, 4, t->w - 16, TUI_PLAIN,
-               "used %s   free %s   mapped %s   total %s   use ", used, freed,
-               mapped, total);
-    tui_printf(t, t->w - 5 - 12, 4, 4,
+               "used %s   free %s   mapped %s   total %s", used, freed, mapped,
+               total);
+    tui_printf(t, t->w - 15 - (int)strlen(pcbuf), 4, (int)strlen(pcbuf),
                p < 0    ? TUI_META
                : p < 70 ? TUI_GOOD
                : p < 85 ? TUI_WARN
@@ -601,11 +604,15 @@ static void draw_storage(struct tui *t, struct app *a) {
 
     if (a->err[a->sub][0] != '\0')
         tui_printf(t, 1, t->h - 2, t->w - 2, TUI_BAD, "! %s", a->err[a->sub]);
-    else if (v->unalloc_valid)
-        tui_printf(t, 1, t->h - 2, t->w - 2, TUI_LABEL,
-                   "unallocated %llu in %u blocks, largest %llu",
-                   (unsigned long long)v->unalloc, v->unalloc_blocks,
-                   (unsigned long long)v->largest_unalloc);
+    else if (v->unalloc_valid) {
+        char ua[16], ul[16];
+
+        human(v->unalloc, ua, sizeof ua);
+        human(v->largest_unalloc, ul, sizeof ul);
+        tui_printf(t, 1, t->h - 2, t->w - 2, TUI_META,
+                   "unallocated %s in %u blocks, largest %s", ua,
+                   v->unalloc_blocks, ul);
+    }
 }
 
 /** @brief A dim label and its value, one blank apart. */
