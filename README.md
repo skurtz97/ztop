@@ -77,12 +77,13 @@ prompt.  There are three views, selected with `TAB`:
 
 | key | |
 | --- | --- |
-| `TAB`, `Shift-TAB` | next / previous view |
+| `TAB`, `Shift-TAB`, click a tab | next / previous view |
 | `1`..`4` | inside STORAGE: CSA, SQA, LSQA, private |
 | `p` | pause/resume refresh |
 | `r` | collect now |
 | `+`/`-` | refresh 1..60 s |
 | `j`/`k`, arrows, `PgUp`/`PgDn`, `g`/`G` | move and scroll the selected table |
+| wheel, click a row | scroll, select a row |
 | `?` | help |
 | `q` | quit |
 

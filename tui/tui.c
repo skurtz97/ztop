@@ -24,6 +24,10 @@
 
 #define ALT_ON ESCS "[?1049h"
 #define ALT_OFF ESCS "[?1049l"
+/* 1000 reports button presses and releases, 1006 gives SGR coordinates
+ * (1-based, no 223 limit) so clicks beyond column 223 still work. */
+#define MOUSE_ON ESCS "[?1000h" ESCS "[?1006h"
+#define MOUSE_OFF ESCS "[?1006l" ESCS "[?1000l"
 #define CUR_OFF ESCS "[?25l"
 #define CUR_ON ESCS "[?25h"
 #define CLEAR ESCS "[H" ESCS "[2J"
@@ -49,7 +53,8 @@ static void wr(int fd, const void *buf, size_t n) {
 static void restore(struct tui *t) {
     if (!t->open)
         return;
-    wr(t->fd_out, RESET CUR_ON ALT_OFF, strlen(RESET CUR_ON ALT_OFF));
+    wr(t->fd_out, RESET CUR_ON MOUSE_OFF ALT_OFF,
+       strlen(RESET CUR_ON MOUSE_OFF ALT_OFF));
     (void)tcsetattr(t->fd_in, TCSANOW, &t->orig);
 }
 
@@ -268,7 +273,7 @@ bool tui_open(struct tui *t) {
 #ifdef SIGWINCH
     (void)signal(SIGWINCH, on_winch);
 #endif
-    outs(t, ALT_ON CUR_OFF CLEAR);
+    outs(t, ALT_ON CUR_OFF CLEAR MOUSE_ON);
     out_flush(t);
     if (!tui_resize(t)) {
         restore(t);
@@ -426,6 +431,19 @@ void tui_flush(struct tui *t) {
     out_flush(t);
 }
 
+int tui_tabs_hit(int x, const char *const *labels, int n) {
+    int at = 0;
+
+    for (int i = 0; i < n; i++) {
+        int len = (int)strlen(labels[i]) + 2;
+
+        if (x >= at && x < at + len)
+            return i;
+        at += len + 1;
+    }
+    return -1;
+}
+
 int tui_tabs_draw(struct tui *t, int x, int y, const char *const *labels, int n,
                   int active) {
     for (int i = 0; i < n; i++) {
@@ -503,6 +521,35 @@ static int decode(struct tui *t) {
     if (k != TUI_KEY_NONE) {
         shift_in(t, 3);
         return k;
+    }
+    if (b[2] == '<') {
+        int v[3] = {0, 0, 0};
+        int n = 0;
+        int i = 3;
+
+        while (i < t->inlen && n < 3) {
+            if (b[i] >= '0' && b[i] <= '9') {
+                v[n] = v[n] * 10 + (b[i] - '0');
+                i++;
+            } else if (b[i] == ';') {
+                n++;
+                i++;
+            } else {
+                break;
+            }
+        }
+        if (i >= t->inlen)
+            return TUI_KEY_NONE; /* wait for the final byte */
+        if (b[i] != 'M' && b[i] != 'm') {
+            shift_in(t, i + 1);
+            return TUI_KEY_NONE;
+        }
+        t->mouse.button = v[0];
+        t->mouse.x = v[1] > 0 ? v[1] - 1 : 0;
+        t->mouse.y = v[2] > 0 ? v[2] - 1 : 0;
+        t->mouse.release = b[i] == 'm';
+        shift_in(t, i + 1);
+        return TUI_KEY_MOUSE;
     }
     if (b[2] >= '1' && b[2] <= '9') {
         int v = 0, i = 2;
@@ -620,6 +667,9 @@ void tui_run(struct tui *t, struct tui_app *app) {
         } else if (k == TUI_KEY_RESIZE) {
             (void)tui_resize(t);
             m.type = TUI_MSG_RESIZE;
+        } else if (k == TUI_KEY_MOUSE) {
+            m.type = TUI_MSG_MOUSE;
+            m.mouse = t->mouse;
         } else {
             m.type = TUI_MSG_KEY;
             m.key = k;

@@ -148,7 +148,10 @@ the terminal code out of the application and gives every view the same
 keys.  The widgets are a viewport with its own selection and scroll
 offset, a table built from columns and a cell callback, tabs, a single
 line input, a progress bar and a status line; an application that wants no
-tabs simply never draws them.  Commands and subscriptions are not modelled:
+tabs simply never draws them.  The mouse is part of the message loop: SGR
+mouse reporting (1006) turns a click into a `TUI_MSG_MOUSE` with 0-based
+cells, and `tui_tabs_hit` answers which tab a column belongs to, so the
+application decides what a click means.  Commands and subscriptions are not modelled:
 a tick message and a return value saying "redraw" are enough here, and a
 `Cmd` type in C would be a function pointer by another name.
 
