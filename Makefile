@@ -54,7 +54,7 @@ TESTFLAGS = -std=c17 -g -O1 -Wall -Wextra -Wshadow -Wpedantic \
 # allocated and never freed.  HEAPCHK(ON) additionally walks the heap at
 # every call, so a double free or an overlay abends instead of hiding.
 LEAKDIR  = $(HOME)/tmp/ztop/leak
-LEAKAWK  = tests/leak.awk
+LEAKAWK  = -f tests/leak.awk
 
 all:
 	@(uname -s | grep OS/390 > /dev/null) || \
