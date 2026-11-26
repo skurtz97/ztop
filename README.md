@@ -54,7 +54,8 @@ make demo TESTCC=cc     # the library on its own
 ## Use
 
 ```text
-ztop                    one-shot CSA
+ztop                    full-screen view when stdout is a terminal,
+                        else one-shot CSA
 ztop -a sqa             SQA, -a lsqa, -a pvt
 ztop -a csa,pvt         several areas
 ztop -s                 system name, host, release, address-space count
@@ -63,8 +64,10 @@ ztop -x                 dump the raw VSMLIST work and data areas
 ztop -d [seconds]       interactive, 2 s refresh (1..60)
 ```
 
-Without `-d` the bytes go to standard output, suitable for `grep` and for a
-shell prompt.  With `-d` there are three views, selected with `TAB`:
+With a terminal and no report option, `ztop` starts the full-screen view.
+Anything that selects a report (`-a`, `-s`, `-j`, `-x`) or pipes the output
+gets the one-shot text instead, suitable for `grep` and for a shell
+prompt.  There are three views, selected with `TAB`:
 
 | view | |
 | --- | --- |

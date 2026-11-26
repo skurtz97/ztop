@@ -573,7 +573,7 @@ static void usage(FILE *f) {
         "  -s  system name, host, release and address-space count\n"
         "  -j  one line per address space\n"
         "  -x  dump the VSMLIST work and data areas (one-shot only)\n"
-        "  -d  interactive view, refreshed every 2 seconds by default\n"
+        "  -d  force the interactive view (the default on a terminal)\n"
         "  -h  this text\n");
 }
 
@@ -774,6 +774,12 @@ int main(int argc, char **argv) {
             return 2;
         }
     }
+
+    /* A bare `ztop` on a terminal is the full-screen view; anything that
+     * selects a report, or a pipe, keeps the one-shot output. */
+    if (!interactive && !dump && !want_sys && !want_jobs && mask == 0 &&
+        isatty(STDOUT_FILENO))
+        interactive = true;
 
     if (interactive) {
         if (dump)
