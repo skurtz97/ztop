@@ -58,7 +58,7 @@ TESTFLAGS = -std=c17 -g -O1 -Wall -Wextra -Wshadow -Wpedantic \
 # ASCII through the EBCDIC converter: make spins on the Makefile, sh
 # rejects the script, awk reads garbage.  Run this once after a checkout.
 tag:
-	@-chtag -t -c ISO8859-1 Makefile README.md DESIGN.md tests/leakcheck.sh
+	@-chtag -t -c ISO8859-1 Makefile README.md DESIGN.md tests/*.sh tests/*.py
 	@-chtag -t -c ISO8859-1 src/*.c src/*.h src/*.S tui/*.c tui/*.h
 	@-chtag -t -c ISO8859-1 tui/Makefile tui/test_tui.c tui/demo.c
 
