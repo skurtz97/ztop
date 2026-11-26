@@ -163,10 +163,15 @@ static bool collect_area(struct vsm_info *v, int area, bool dump) {
 }
 
 /** @brief Fraction of the mapped area in use, or -1 when there is no total. */
+/* Only CSA and PVT get an unallocated pass, so only they have a total. */
+static bool has_total(const struct vsm_info *v) {
+    return (v->area == VSM_CSA || v->area == VSM_PVT) && v->unalloc_valid;
+}
+
 static int pct(const struct vsm_info *v) {
     uint64_t total;
 
-    if (!v->unalloc_valid || v->area != VSM_CSA)
+    if (!has_total(v))
         return -1;
     total = v->foot + v->unalloc;
     if (total == 0)
@@ -245,6 +250,20 @@ static void print_system(const struct zsys *z) {
     (void)printf(
         "system %s  host %s  os %s  machine %s  address spaces %d/%u\n",
         z->sysname, z->host, z->os, z->machine, z->njobs, z->slots);
+    if (z->ipl_ok)
+        (void)printf("ipl %04u-%02u-%02u %02u:%02u:%02u  real storage %llu K\n",
+                     z->ipl.year, z->ipl.month, z->ipl.day, z->ipl.hour,
+                     z->ipl.minute, z->ipl.second,
+                     (unsigned long long)z->real_k);
+}
+
+static void print_page(const struct zpage *p) {
+    (void)printf("aux storage  common %s%s  plpa %s%s  local %s  vio %s"
+                 ", journal %u\n",
+                 p->common_pds ? "yes" : "no", p->common_full ? " full" : "",
+                 p->plpa_pds ? "yes" : "no", p->plpa_full ? " full" : "",
+                 p->local_paging ? "on" : "off",
+                 p->vio_journaling ? "on" : "off", p->vio_ci);
 }
 
 static void print_jobs(const struct zsys *z) {
@@ -263,6 +282,9 @@ struct app {
     struct zsys sys;
     bool have_sys;
     char sys_err[160];
+    struct zpage page;
+    bool have_page;
+    char page_err[160];
     int interval;
     int collect_ms;
     bool paused;
@@ -470,30 +492,59 @@ static void collect(struct app *a) {
         }
     }
     sys_read(a);
+    a->have_page = zpage_read(&a->page);
+    if (!a->have_page)
+        (void)snprintf(a->page_err, sizeof a->page_err,
+                       "ASMVT is only available on z/OS");
     (void)clock_gettime(CLOCK_MONOTONIC, &t1);
     a->collect_ms = (int)((t1.tv_sec - t0.tv_sec) * 1000 +
                           (t1.tv_nsec - t0.tv_nsec) / 1000000);
 }
 
+static const struct tui_hint view_bar[] = {
+    {"q", "quit"},
+    {"TAB", "view"},
+    {"r", "refresh"},
+    {"?", "help"},
+};
+
+static const struct tui_hint storage_bar[] = {
+    {"q", "quit"},
+    {"TAB", "view"},
+    {"s", "sort"},
+    {"Enter", "details"},
+};
+
 static void draw_header(struct tui *t, const struct app *a) {
     char now[16];
+    char right[64];
     time_t clock_now = time(NULL);
     struct tm tm;
 
     (void)localtime_r(&clock_now, &tm);
     (void)strftime(now, sizeof now, "%H:%M:%S", &tm);
-    tui_fill(t, 0, 0, t->w, 1, ' ', TUI_TITLE);
-    tui_printf(t, 1, 0, t->w - 30, TUI_TITLE, " ztop %s  %s  %s  collect %dms ",
-               ZTOP_VERSION, a->host, now, a->collect_ms);
+    tui_fill(t, 0, 0, t->w, 1, ' ', TUI_BAR);
+    tui_printf(t, 1, 0, 7, TUI_KEYCAP, " ztop ");
+    tui_printf(t, 7, 0, 8, TUI_META, " %s", ZTOP_VERSION);
+    tui_printf(t, 15, 0, t->w - 40, TUI_PLAIN, " %s", a->host);
+    if (a->collect_ms > 0)
+        (void)snprintf(right, sizeof right, "collect %dms   %s", a->collect_ms,
+                       now);
+    else
+        (void)snprintf(right, sizeof right, "collect <1ms   %s", now);
+    tui_printf(t, t->w - 1 - (int)strlen(right), 0, (int)strlen(right),
+               TUI_PLAIN, "%s", right);
     if (a->paused)
-        tui_put(t, t->w - 9, 0, " PAUSED ", 8, TUI_WARN);
+        tui_printf(t, t->w - 9 - (int)strlen(right), 0, 8, TUI_WARN,
+                   " PAUSED ");
 }
 
 static void draw_tabs(struct tui *t, const struct app *a) {
-    static const char *const labels[3] = {"1 STORAGE", "2 SYSTEM", "3 JOBS"};
-    int x = tui_tabs_draw(t, 0, 1, labels, 3, a->tab);
+    static const char *const labels[4] = {"1 STORAGE", "2 SYSTEM", "3 JOBS",
+                                          "4 PAGING"};
+    int x = tui_tabs_draw(t, 0, 1, labels, 4, a->tab);
 
-    tui_printf(t, x + 1, 1, t->w - x - 2, TUI_LABEL, "refresh %ds  +/-",
+    tui_printf(t, x + 1, 1, t->w - x - 2, TUI_META, "refresh %ds  +/-",
                a->interval);
 }
 
@@ -523,10 +574,10 @@ static void draw_storage(struct tui *t, struct app *a) {
                    a->sub_dir < 0 ? "^" : "v");
     cols[col_of[a->sub_sort]].title = head;
     a->storage.cols = cols;
-    tui_printf(t, 1, 3, 6, a->sub == 0 ? TUI_TITLE : TUI_LABEL, " CSA ");
-    tui_printf(t, 7, 3, 6, a->sub == 1 ? TUI_TITLE : TUI_LABEL, " SQA ");
-    tui_printf(t, 13, 3, 6, a->sub == 2 ? TUI_TITLE : TUI_LABEL, " LSQA ");
-    tui_printf(t, 20, 3, 6, a->sub == 3 ? TUI_TITLE : TUI_LABEL, " PVT ");
+    tui_printf(t, 1, 3, 6, a->sub == 0 ? TUI_TAB_ON : TUI_TAB_OFF, " CSA ");
+    tui_printf(t, 7, 3, 6, a->sub == 1 ? TUI_TAB_ON : TUI_TAB_OFF, " SQA ");
+    tui_printf(t, 13, 3, 7, a->sub == 2 ? TUI_TAB_ON : TUI_TAB_OFF, " LSQA ");
+    tui_printf(t, 20, 3, 6, a->sub == 3 ? TUI_TAB_ON : TUI_TAB_OFF, " PVT ");
 
     if (!a->have[a->sub]) {
         tui_printf(t, 1, 6, t->w - 2, TUI_BAD, "%s: %s", area_upper[a->sub],
@@ -536,48 +587,138 @@ static void draw_storage(struct tui *t, struct app *a) {
     human(v->used, used, sizeof used);
     human(v->free, freed, sizeof freed);
     human(v->foot, mapped, sizeof mapped);
-    if (v->area == VSM_CSA && v->unalloc_valid) {
+    if (has_total(v)) {
         human(v->foot + v->unalloc, total, sizeof total);
-        (void)snprintf(pcbuf, sizeof pcbuf, "%d%%", p);
+        (void)snprintf(pcbuf, sizeof pcbuf, "use %d%%", p);
     } else {
         (void)snprintf(total, sizeof total, "-");
-        (void)snprintf(pcbuf, sizeof pcbuf, "-");
+        (void)snprintf(pcbuf, sizeof pcbuf, "use -");
     }
-    tui_printf(t, 1, 4, t->w - 2, TUI_PLAIN,
-               "used %s  free %s  mapped %s  total %s  use %s  blocks %u", used,
-               freed, mapped, total, pcbuf, v->blocks);
+    tui_printf(t, 1, 4, t->w - 16, TUI_PLAIN,
+               "used %s   free %s   mapped %s   total %s", used, freed, mapped,
+               total);
+    tui_printf(t, t->w - 15 - (int)strlen(pcbuf), 4, (int)strlen(pcbuf),
+               p < 0    ? TUI_META
+               : p < 70 ? TUI_GOOD
+               : p < 85 ? TUI_WARN
+                        : TUI_BAD,
+               "%s", pcbuf);
     if (p >= 0)
         tui_progress(t, t->w - 14, 4, 12, p);
     tui_table_draw(t, r, &a->storage, v->nsub, storage_cell, NULL, a);
 
     if (a->err[a->sub][0] != '\0')
         tui_printf(t, 1, t->h - 2, t->w - 2, TUI_BAD, "! %s", a->err[a->sub]);
-    else if (v->unalloc_valid)
-        tui_printf(t, 1, t->h - 2, t->w - 2, TUI_LABEL,
-                   "unallocated %llu in %u blocks, largest %llu",
-                   (unsigned long long)v->unalloc, v->unalloc_blocks,
-                   (unsigned long long)v->largest_unalloc);
+    else if (v->unalloc_valid) {
+        char ua[16], ul[16];
+
+        human(v->unalloc, ua, sizeof ua);
+        human(v->largest_unalloc, ul, sizeof ul);
+        tui_printf(t, 1, t->h - 2, t->w - 2, TUI_META,
+                   "unallocated %s in %u blocks, largest %s", ua,
+                   v->unalloc_blocks, ul);
+    }
+}
+
+/** @brief A dim label and its value, one blank apart. */
+static void kv(struct tui *t, int x, int y, int maxw, const char *label,
+               const char *value, tui_style st) {
+    int ll = (int)strlen(label);
+
+    if (ll >= maxw - 1)
+        return;
+    tui_printf(t, x, y, ll, TUI_META, "%s", label);
+    tui_printf(t, x + ll + 1, y, maxw - ll - 1, st, "%s", value);
+}
+
+/** @brief An accent heading with a dim rule filling the row. */
+static void section(struct tui *t, int y, const char *name) {
+    int n = (int)strlen(name);
+
+    tui_printf(t, 1, y, n, TUI_ACCENT, "%s", name);
+    if (n + 2 < t->w)
+        tui_fill(t, n + 2, y, t->w - n - 2, 1, '-', TUI_META);
 }
 
 static void draw_system(struct tui *t, const struct app *a) {
     const struct zsys *z = &a->sys;
+    char b1[32], b2[32];
+    int half = t->w / 2;
 
     if (!a->have_sys) {
         tui_printf(t, 1, 4, t->w - 2, TUI_BAD, "%s", a->sys_err);
         return;
     }
-    tui_printf(t, 1, 4, t->w - 2, TUI_LABEL, "system     %s", z->sysname);
-    tui_printf(t, 1, 5, t->w - 2, TUI_PLAIN, "host       %s", z->host);
-    tui_printf(t, 1, 6, t->w - 2, TUI_PLAIN, "os         %s", z->os);
-    tui_printf(t, 1, 7, t->w - 2, TUI_PLAIN, "machine    %s", z->machine);
-    tui_printf(t, 1, 8, t->w - 2, TUI_PLAIN, "spaces     %d used, %u slots",
-               z->njobs, z->slots);
-    tui_printf(
-        t, 1, 10, t->w - 2, TUI_LABEL,
-        "storage    CSA %llu unallocated, PVT %llu",
-        (unsigned long long)(a->info[0].unalloc_valid ? a->info[0].unalloc : 0),
-        (unsigned long long)(a->info[3].unalloc_valid ? a->info[3].unalloc
-                                                      : 0));
+    human(z->real_k * 1024, b1, sizeof b1);
+    section(t, 4, "identity");
+    kv(t, 1, 5, half - 1, "system", z->sysname, TUI_ACCENT);
+    kv(t, half, 5, t->w - half - 1, "host", z->host, TUI_PLAIN);
+    kv(t, 1, 6, half - 1, "release", z->os, TUI_PLAIN);
+    kv(t, half, 6, t->w - half - 1, "machine", z->machine, TUI_PLAIN);
+
+    section(t, 8, "ipl");
+    if (z->ipl_ok) {
+        (void)snprintf(b1, sizeof b1, "%04u-%02u-%02u", z->ipl.year,
+                       z->ipl.month, z->ipl.day);
+        (void)snprintf(b2, sizeof b2, "%02u:%02u:%02u", z->ipl.hour,
+                       z->ipl.minute, z->ipl.second);
+        kv(t, 1, 9, half - 1, "date", b1, TUI_PLAIN);
+        kv(t, half, 9, t->w - half - 1, "time", b2, TUI_PLAIN);
+    }
+
+    section(t, 11, "storage");
+    human(z->real_k * 1024, b1, sizeof b1);
+    kv(t, 1, 12, half - 1, "real", b1, TUI_PLAIN);
+    (void)snprintf(b2, sizeof b2, "%d used / %u slots", z->njobs, z->slots);
+    kv(t, half, 12, t->w - half - 1, "address spaces", b2, TUI_PLAIN);
+    if (a->info[0].unalloc_valid) {
+        human(a->info[0].unalloc, b1, sizeof b1);
+        kv(t, 1, 13, half - 1, "csa unallocated", b1, TUI_PLAIN);
+    }
+    if (a->info[3].unalloc_valid) {
+        human(a->info[3].unalloc, b1, sizeof b1);
+        kv(t, half, 13, t->w - half - 1, "pvt unallocated", b1, TUI_PLAIN);
+    }
+}
+
+static void draw_paging(struct tui *t, const struct app *a) {
+    const struct zpage *p = &a->page;
+    char b[48];
+    int half = t->w / 2;
+
+    if (!a->have_page) {
+        tui_printf(t, 1, 4, t->w - 2, TUI_BAD, "%s", a->page_err);
+        return;
+    }
+    section(t, 4, "auxiliary storage");
+    (void)snprintf(b, sizeof b, "%08X", (unsigned int)p->asmvt);
+    kv(t, 1, 5, half - 1, "asmvt", b, TUI_META);
+
+    section(t, 7, "page data sets");
+    (void)snprintf(b, sizeof b, "%s%s", p->common_pds ? "yes" : "no",
+                   p->common_full ? ", full" : "");
+    kv(t, 1, 8, half - 1, "common", b,
+       p->common_full  ? TUI_BAD
+       : p->common_pds ? TUI_GOOD
+                       : TUI_WARN);
+    (void)snprintf(b, sizeof b, "%s%s", p->plpa_pds ? "yes" : "no",
+                   p->plpa_full ? ", full" : "");
+    kv(t, half, 8, t->w - half - 1, "plpa", b,
+       p->plpa_full  ? TUI_BAD
+       : p->plpa_pds ? TUI_GOOD
+                     : TUI_WARN);
+    kv(t, 1, 9, half - 1, "local paging", p->local_paging ? "on" : "off",
+       p->local_paging ? TUI_GOOD : TUI_WARN);
+    (void)snprintf(b, sizeof b, "%s%s", p->quick_start ? "quick" : "cold",
+                   p->warm_start ? ", warm VIO" : "");
+    kv(t, half, 9, t->w - half - 1, "start", b,
+       p->quick_start || p->warm_start ? TUI_WARN : TUI_PLAIN);
+
+    section(t, 11, "vio journal");
+    kv(t, 1, 12, half - 1, "state", p->vio_journaling ? "active" : "off",
+       p->vio_journaling ? TUI_GOOD : TUI_META);
+    (void)snprintf(b, sizeof b, "%u", p->vio_ci);
+    kv(t, half, 12, t->w - half - 1, "control intervals", b, TUI_PLAIN);
 }
 
 static void draw_jobs(struct tui *t, struct app *a) {
@@ -617,7 +758,7 @@ static void draw_subpool(struct tui *t, const struct app *a) {
     int h = 12;
     int x = (t->w - w) / 2;
     int y = (t->h - h) / 2;
-    char u[16], f[16], m[16], l[16];
+    char u[16], f[16], m[16], l[16], b[32];
 
     if (x < 0)
         x = 0;
@@ -628,59 +769,60 @@ static void draw_subpool(struct tui *t, const struct app *a) {
     human(s->foot, m, sizeof m);
     human(s->largest, l, sizeof l);
     tui_fill(t, x, y, w, h, ' ', TUI_PLAIN);
-    tui_box(t, x, y, w, h, TUI_LABEL);
-    tui_printf(t, x + 2, y + 1, w - 4, TUI_TITLE, "subpool %u", s->id);
-    tui_printf(t, x + 2, y + 3, w - 4, TUI_PLAIN, "key        %u", s->key);
-    tui_printf(t, x + 2, y + 4, w - 4, TUI_PLAIN, "blocks     %u", s->blocks);
-    tui_printf(t, x + 2, y + 5, w - 4, TUI_PLAIN, "used       %s", u);
-    tui_printf(t, x + 2, y + 6, w - 4, TUI_PLAIN, "free       %s", f);
-    tui_printf(t, x + 2, y + 7, w - 4, TUI_PLAIN, "mapped     %s", m);
-    tui_printf(t, x + 2, y + 8, w - 4, TUI_PLAIN, "largest    %s", l);
-    if (v->area == VSM_PVT)
-        tui_printf(t, x + 2, y + 9, w - 4, TUI_PLAIN, "tcb        %08X",
-                   (unsigned int)s->tcb);
-    else
-        tui_printf(t, x + 2, y + 9, w - 4, TUI_PLAIN, "address    %08X-%08X",
-                   (unsigned int)s->lo, (unsigned int)s->hi);
-    tui_printf(t, x + 2, y + h - 2, w - 4, TUI_STYLE(7, 0, TUI_DIM),
-               "any key closes");
+    (void)snprintf(b, sizeof b, "subpool %u", s->id);
+    tui_box_frame(t, x, y, w, h, TUI_ACCENT, b, TUI_ACCENT);
+    (void)snprintf(b, sizeof b, "%u", s->key);
+    kv(t, x + 2, y + 2, w - 4, "key", b, TUI_PLAIN);
+    (void)snprintf(b, sizeof b, "%u", s->blocks);
+    kv(t, x + 2, y + 3, w - 4, "blocks", b, TUI_PLAIN);
+    kv(t, x + 2, y + 4, w - 4, "used", u, TUI_PLAIN);
+    kv(t, x + 2, y + 5, w - 4, "free", f, TUI_PLAIN);
+    kv(t, x + 2, y + 6, w - 4, "mapped", m, TUI_PLAIN);
+    kv(t, x + 2, y + 7, w - 4, "largest", l, TUI_PLAIN);
+    if (v->area == VSM_PVT) {
+        (void)snprintf(b, sizeof b, "%08X", (unsigned int)s->tcb);
+        kv(t, x + 2, y + 8, w - 4, "tcb", b, TUI_PLAIN);
+    } else {
+        (void)snprintf(b, sizeof b, "%08X-%08X", (unsigned int)s->lo,
+                       (unsigned int)s->hi);
+        kv(t, x + 2, y + 8, w - 4, "address", b, TUI_PLAIN);
+    }
+    tui_printf(t, x + 2, y + h - 2, w - 4, TUI_META, "any key closes");
 }
 
 static void draw_help(struct tui *t) {
+    static const struct tui_hint views[] = {
+        {"TAB", "next view"},
+        {"Shift-TAB", "previous view"},
+        {"1-4", "CSA SQA LSQA PVT"},
+        {"click", "a tab"},
+    };
+    static const struct tui_hint moving[] = {
+        {"j k", "one row"},  {"PgUp PgDn", "a page"}, {"g G", "first, last"},
+        {"wheel", "scroll"}, {"Enter", "details"},    {"s S", "sort, reverse"},
+    };
+    static const struct tui_hint screen[] = {
+        {"p", "pause"}, {"r", "refresh now"}, {"+ -", "interval 1..60 s"},
+        {"?", "help"},  {"q", "quit"},
+    };
     int w = t->w < 64 ? t->w - 2 : 62;
-    int h = 19;
+    int h = 15;
     int x = (t->w - w) / 2;
     int y = (t->h - h) / 2;
 
+    if (x < 0)
+        x = 0;
     if (y < 0)
         y = 0;
     tui_fill(t, x, y, w, h, ' ', TUI_PLAIN);
-    tui_box(t, x, y, w, h, TUI_LABEL);
-    tui_printf(t, x + 2, y + 1, w - 4, TUI_TITLE, "ztop keys");
-
-    tui_printf(t, x + 2, y + 3, w - 4, TUI_LABEL, "views");
-    tui_printf(t, x + 2, y + 4, w - 4, TUI_PLAIN,
-               "TAB / Shift-TAB   next / previous view");
-    tui_printf(t, x + 2, y + 5, w - 4, TUI_PLAIN,
-               "1 2 3 4           inside STORAGE: CSA SQA LSQA PVT");
-    tui_printf(t, x + 2, y + 6, w - 4, TUI_PLAIN,
-               "click a tab       same, with the mouse");
-
-    tui_printf(t, x + 2, y + 8, w - 4, TUI_LABEL, "moving");
-    tui_printf(t, x + 2, y + 9, w - 4, TUI_PLAIN, "j k / arrows      one row");
-    tui_printf(t, x + 2, y + 10, w - 4, TUI_PLAIN, "PgUp PgDn         a page");
-    tui_printf(t, x + 2, y + 11, w - 4, TUI_PLAIN,
-               "g G / Home End    first / last");
-    tui_printf(t, x + 2, y + 12, w - 4, TUI_PLAIN,
-               "wheel, click      scroll, select a row");
-    tui_printf(t, x + 2, y + 13, w - 4, TUI_PLAIN,
-               "s / S             sort / reverse   Enter  details");
-
-    tui_printf(t, x + 2, y + 14, w - 4, TUI_LABEL, "the screen");
-    tui_printf(t, x + 2, y + 15, w - 4, TUI_PLAIN,
-               "p pause   r refresh now   + - interval 1..60 s");
-    tui_printf(t, x + 2, y + 16, w - 4, TUI_PLAIN,
-               "? close this help         q quit");
+    tui_box_frame(t, x, y, w, h, TUI_ACCENT, "keys", TUI_ACCENT);
+    tui_printf(t, x + 2, y + 2, w - 4, TUI_LABEL, "views");
+    tui_hints(t, x + 2, y + 3, w - 4, views, 4);
+    tui_printf(t, x + 2, y + 5, w - 4, TUI_LABEL, "moving");
+    tui_hints(t, x + 2, y + 6, w - 4, moving, 3);
+    tui_hints(t, x + 2, y + 7, w - 4, moving + 3, 3);
+    tui_printf(t, x + 2, y + 9, w - 4, TUI_LABEL, "the screen");
+    tui_hints(t, x + 2, y + 10, w - 4, screen, 5);
 }
 
 /** @brief The right half of the status line: what is under the cursor. */
@@ -722,19 +864,19 @@ static void view(void *model, struct tui *t) {
         draw_storage(t, a);
     } else if (a->tab == 1) {
         draw_system(t, a);
-    } else {
+    } else if (a->tab == 2) {
         draw_jobs(t, a);
+    } else {
+        draw_paging(t, a);
     }
     if (a->popup)
         draw_subpool(t, a);
     if (a->help)
         draw_help(t);
     detail(a, right, sizeof right);
-    tui_statusbar(t,
-                  a->tab == 0   ? "TAB view  1-4 area  j/k move  s sort  ? help"
-                  : a->tab == 1 ? "TAB view  r refresh  ? help"
-                                : "TAB view  j/k move  s sort  ? help",
-                  right);
+    tui_statusbar(t, NULL, right);
+    tui_hints(t, 0, t->h - 1, t->w - 20, a->tab == 0 ? storage_bar : view_bar,
+              4);
 }
 
 static bool parse_areas(const char *s, unsigned int *mask) {
@@ -766,10 +908,12 @@ static bool parse_areas(const char *s, unsigned int *mask) {
 static void usage(FILE *f) {
     (void)fprintf(
         f,
-        "usage: ztop [-a csa|sqa|lsqa|pvt|all] [-s] [-j] [-x] [-d [seconds]]\n"
+        "usage: ztop [-a csa|sqa|lsqa|pvt|all] [-s] [-j] [-p] [-x] [-d "
+        "[seconds]]\n"
         "  -a  storage areas to report (default csa); comma-separate or all\n"
-        "  -s  system name, host, release and address-space count\n"
+        "  -s  system name, host, release, IPL and address-space count\n"
         "  -j  one line per address space\n"
+        "  -p  auxiliary storage: page data sets, local paging, VIO journal\n"
         "  -x  dump the VSMLIST work and data areas (one-shot only)\n"
         "  -d  force the interactive view (the default on a terminal)\n"
         "  -h  this text\n");
@@ -889,11 +1033,11 @@ static bool update(struct tui_app *app, const struct tui_msg *m) {
         return true;
     }
     if (m->key == TUI_KEY_TAB) {
-        a->tab = (a->tab + 1) % 3;
+        a->tab = (a->tab + 1) % 4;
         return true;
     }
     if (m->key == TUI_KEY_BACKTAB) {
-        a->tab = (a->tab + 2) % 3;
+        a->tab = (a->tab + 3) % 4;
         return true;
     }
     if (a->tab == 0 && m->key >= '1' && m->key <= '4') {
@@ -975,7 +1119,7 @@ static void run_tui(int interval) {
 }
 
 static void run_oneshot(unsigned mask, bool want_sys, bool want_jobs,
-                        bool dump) {
+                        bool want_page, bool dump) {
     char host[65];
     bool printed = false;
     int rc = 0;
@@ -995,6 +1139,19 @@ static void run_oneshot(unsigned mask, bool want_sys, bool want_jobs,
             (void)printf("\n");
         print_area(&v);
         printed = true;
+    }
+    if (want_page) {
+        struct zpage p;
+
+        if (!zpage_read(&p)) {
+            (void)fprintf(stderr, "ztop: paging is only available on z/OS\n");
+            rc = 1;
+        } else {
+            if (printed)
+                (void)printf("\n");
+            print_page(&p);
+            printed = true;
+        }
     }
     if (want_sys || want_jobs) {
         struct zsys z;
@@ -1028,6 +1185,7 @@ int main(int argc, char **argv) {
     bool interactive = false;
     bool want_sys = false;
     bool want_jobs = false;
+    bool want_page = false;
     int interval = 0;
     int i;
 
@@ -1041,6 +1199,8 @@ int main(int argc, char **argv) {
             want_sys = true;
         } else if (strcmp(argv[i], "-j") == 0) {
             want_jobs = true;
+        } else if (strcmp(argv[i], "-p") == 0) {
+            want_page = true;
         } else if (strcmp(argv[i], "-a") == 0) {
             if (i + 1 >= argc || !parse_areas(argv[++i], &mask)) {
                 usage(stderr);
@@ -1067,22 +1227,22 @@ int main(int argc, char **argv) {
 
     /* A bare `ztop` on a terminal is the full-screen view; anything that
      * selects a report, or a pipe, keeps the one-shot output. */
-    if (!interactive && !dump && !want_sys && !want_jobs && mask == 0 &&
-        isatty(STDOUT_FILENO))
+    if (!interactive && !dump && !want_sys && !want_jobs && !want_page &&
+        mask == 0 && isatty(STDOUT_FILENO))
         interactive = true;
 
     if (interactive) {
         if (dump)
             (void)fprintf(stderr, "ztop: -x is ignored with -d\n");
         if (interval < 1)
-            interval = 2;
+            interval = 10;
         if (interval > 60)
             interval = 60;
         run_tui(interval);
     } else {
-        if (mask == 0 && !want_sys && !want_jobs)
+        if (mask == 0 && !want_sys && !want_jobs && !want_page)
             mask = 1u;
-        run_oneshot(mask, want_sys, want_jobs, dump);
+        run_oneshot(mask, want_sys, want_jobs, want_page, dump);
     }
     return 0;
 }

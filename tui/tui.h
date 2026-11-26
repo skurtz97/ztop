@@ -50,6 +50,10 @@ typedef struct {
 #define TUI_BAD TUI_STYLE(1, 0, TUI_BOLD)
 #define TUI_TAB_ON TUI_STYLE(0, 7, TUI_BOLD)
 #define TUI_TAB_OFF TUI_STYLE(7, 0, TUI_DIM)
+#define TUI_ACCENT TUI_STYLE(6, 0, TUI_BOLD)
+#define TUI_META TUI_STYLE(7, 0, TUI_DIM)
+#define TUI_KEYCAP TUI_STYLE(0, 6, 0)
+#define TUI_BAR TUI_STYLE(7, 4, 0)
 
 enum {
     TUI_KEY_NONE = -1,
@@ -110,6 +114,9 @@ void tui_put(struct tui *t, int x, int y, const char *s, int maxw,
 void tui_printf(struct tui *t, int x, int y, int maxw, tui_style st,
                 const char *fmt, ...);
 void tui_box(struct tui *t, int x, int y, int w, int h, tui_style st);
+/** @brief A box with a title set into its top border. */
+void tui_box_frame(struct tui *t, int x, int y, int w, int h, tui_style st,
+                   const char *title, tui_style title_st);
 void tui_rule(struct tui *t, int y, char ch, tui_style st);
 void tui_flush(struct tui *t);
 
@@ -188,6 +195,16 @@ int tui_tabs_hit(int x, const char *const *labels, int n);
 
 /** Cycle tabs with left/right/tab/backtab; true when it was consumed. */
 bool tui_tabs_key(int key, int *active, int n);
+
+/** @brief A key cap and its label, for the status bar. */
+struct tui_hint {
+    const char *key;
+    const char *label;
+};
+
+/** @brief Draw key caps and their labels along one row. */
+void tui_hints(struct tui *t, int x, int y, int maxw,
+               const struct tui_hint *hints, int n);
 
 /** A single-line text input. */
 struct tui_input {

@@ -32,6 +32,11 @@ static uint16_t rd16(uintptr_t a) {
     return v;
 }
 
+/** @brief Read one byte from an absolute address. */
+static unsigned char rd8(uintptr_t a) {
+    return *(const unsigned char *)a;
+}
+
 /** @brief Copy an EBCDIC field and trim its blanks.
  *
  * The program runs in EBCDIC mode, and the terminal converts on output,
@@ -49,6 +54,47 @@ static void ebcdic(char *dst, size_t dstlen, const void *src, size_t srclen) {
         dst[--n] = '\0';
 }
 #endif
+
+/** @brief One nibble of a packed-decimal field. */
+static unsigned int nib(uint32_t v, unsigned int shift) {
+    return (v >> shift) & 0xFu;
+}
+
+bool zipl_decode(uint32_t date, uint32_t hundredths, struct zipl *out) {
+    static const unsigned int mdays[12] = {
+        31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+    };
+    unsigned int century = nib(date, 24);
+    unsigned int yy = nib(date, 20) * 10 + nib(date, 16);
+    unsigned int ddd = nib(date, 12) * 100 + nib(date, 8) * 10 + nib(date, 4);
+    unsigned int year, leap, secs, month = 0, day;
+
+    if (century > 1 || ddd == 0 || ddd > 366)
+        return false;
+    year = (century == 1 ? 2000u : 1900u) + yy;
+    leap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)) ? 1u : 0u;
+    if (ddd > 365 + leap)
+        return false;
+    secs = hundredths / 100;
+    if (hundredths % 100 > 99 || secs >= 24 * 3600)
+        return false;
+
+    day = ddd;
+    for (month = 0; month < 12; month++) {
+        unsigned int len = mdays[month] + (month == 1 ? leap : 0);
+
+        if (day <= len)
+            break;
+        day -= len;
+    }
+    out->year = year;
+    out->month = month + 1;
+    out->day = day;
+    out->hour = secs / 3600;
+    out->minute = (secs / 60) % 60;
+    out->second = secs % 60;
+    return true;
+}
 
 bool zsys_read(struct zsys *z) {
 #ifdef __MVS__
@@ -81,9 +127,43 @@ bool zsys_read(struct zsys *z) {
         if (j->name[0] != '\0')
             z->njobs++;
     }
+    z->cvt = (uint32_t)cvt;
+    z->smca = rd32(cvt + 0xC4);
+    z->real_k = rd32(cvt + 0x358);
+    if (z->smca != 0)
+        z->ipl_ok = zipl_decode(rd32((uintptr_t)z->smca + 340),
+                                rd32((uintptr_t)z->smca + 336), &z->ipl);
     return true;
 #else
     (void)z;
+    return false;
+#endif
+}
+
+bool zpage_read(struct zpage *p) {
+#ifdef __MVS__
+    uintptr_t cvt = rd32(0x10);
+    uintptr_t asmvt;
+
+    memset(p, 0, sizeof *p);
+    if (cvt == 0)
+        return false;
+    asmvt = rd32(cvt + 0x2C0);
+    if (asmvt == 0)
+        return false;
+    p->asmvt = (uint32_t)asmvt;
+    p->common_pds = (rd8(asmvt) & 0x80u) != 0;
+    p->local_paging = (rd8(asmvt) & 0x20u) == 0;
+    p->plpa_pds = (rd8(asmvt) & 0x08u) != 0;
+    p->plpa_full = (rd8(asmvt) & 0x04u) != 0;
+    p->common_full = (rd8(asmvt) & 0x02u) != 0;
+    p->quick_start = (rd8(asmvt + 1) & 0x10u) != 0;
+    p->warm_start = (rd8(asmvt + 1) & 0x08u) != 0;
+    p->vio_journaling = (rd8(asmvt + 0xB8) & 0x10u) != 0;
+    p->vio_ci = rd32(asmvt + 0x8C);
+    return true;
+#else
+    (void)p;
     return false;
 #endif
 }

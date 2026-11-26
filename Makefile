@@ -48,8 +48,22 @@ TESTCC    = cc
 TESTFLAGS = -std=c17 -g -O1 -Wall -Wextra -Wshadow -Wpedantic \
             -D_XOPEN_SOURCE=500 -D_POSIX_C_SOURCE=200112L
 
+# Language Environment sees every heap request the program makes.  Its
+# storage report is therefore the leak test a z/OS user can run: if the
+# gets and the frees differ by the end of the enclave, something was
+# allocated and never freed.  HEAPCHK(ON) additionally walks the heap at
+# every call, so a double free or an overlay abends instead of hiding.
+
+# git checkout leaves every source untagged, and the z/OS tools then read
+# ASCII through the EBCDIC converter: make spins on the Makefile, sh
+# rejects the script, awk reads garbage.  Run this once after a checkout.
+tag:
+	@-chtag -t -c ISO8859-1 Makefile README.md DESIGN.md tests/*.sh tests/*.py
+	@-chtag -t -c ISO8859-1 src/*.c src/*.h src/*.S tui/*.c tui/*.h
+	@-chtag -t -c ISO8859-1 tui/Makefile tui/test_tui.c tui/demo.c
+
 all:
-	@(uname -s | grep OS/390 > /dev/null) || \
+	@uname -s | grep OS/390 > /dev/null || \
 	    { echo "ztop builds only on z/OS; this tree is a backup copy"; exit 1; }
 	$(MAKE) ztop
 
@@ -65,14 +79,20 @@ check: ztop
 	./ztop -a pvt
 	./ztop -j
 
-test: tests/test_vsm.c src/vsm.c tui/test_tui.c tui/tui.c
+test: tests/test_vsm.c tests/test_sys.c src/vsm.c src/sys.c tui/test_tui.c tui/tui.c
 	$(TESTCC) $(TESTFLAGS) -o tests/test_vsm tests/test_vsm.c src/vsm.c
 	./tests/test_vsm
+	$(TESTCC) $(TESTFLAGS) -Isrc -o tests/test_sys tests/test_sys.c src/sys.c
+	./tests/test_sys
 	$(TESTCC) $(TESTFLAGS) -Itui -o tui/test_tui tui/test_tui.c tui/tui.c
 	./tui/test_tui
+	@sh tests/leakcheck.sh --selftest
 
 demo: tui/demo.c tui/tui.c
 	$(TESTCC) $(TESTFLAGS) -Itui -o tui/demo tui/demo.c tui/tui.c
 
+leakcheck: ztop
+	@sh tests/leakcheck.sh ./ztop
+
 clean:
-	rm -f ztop $(OBJ) tests/test_vsm tui/test_tui tui/demo
+	rm -f ztop $(OBJ) tests/test_vsm tests/test_sys tui/test_tui tui/demo

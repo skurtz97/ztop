@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -371,6 +372,11 @@ void tui_printf(struct tui *t, int x, int y, int maxw, tui_style st,
 }
 
 void tui_box(struct tui *t, int x, int y, int w, int h, tui_style st) {
+    tui_box_frame(t, x, y, w, h, st, NULL, TUI_PLAIN);
+}
+
+void tui_box_frame(struct tui *t, int x, int y, int w, int h, tui_style st,
+                   const char *title, tui_style title_st) {
     if (w < 2 || h < 2)
         return;
     for (int i = 1; i < w - 1; i++) {
@@ -385,6 +391,16 @@ void tui_box(struct tui *t, int x, int y, int w, int h, tui_style st) {
     tui_put(t, x + w - 1, y, "+", 1, st);
     tui_put(t, x, y + h - 1, "+", 1, st);
     tui_put(t, x + w - 1, y + h - 1, "+", 1, st);
+    if (title != NULL && title[0] != '\0' && w > 6) {
+        char chip[64];
+        int n = (int)strlen(title);
+        int room = w - 6;
+
+        if (n > room)
+            n = room;
+        (void)snprintf(chip, sizeof chip, " %.*s ", n, title);
+        tui_printf(t, x + 2, y, (int)strlen(chip), title_st, "%s", chip);
+    }
 }
 
 void tui_flush(struct tui *t) {
@@ -453,7 +469,7 @@ int tui_tabs_draw(struct tui *t, int x, int y, const char *const *labels, int n,
                    labels[i]);
         x += len;
         if (i + 1 < n) {
-            tui_put(t, x, y, " ", 1, TUI_PLAIN);
+            tui_put(t, x, y, "|", 1, TUI_META);
             x += 1;
         }
     }
@@ -755,13 +771,21 @@ void tui_table_draw(struct tui *t, tui_rect r, const struct tui_table *tb,
     tui_fill(t, r.x, r.y, r.w, 1, ' ', TUI_LABEL);
     for (int c = 0; c < tb->ncols && x < r.x + r.w; c++) {
         int w = tb->cols[c].width;
+        char up[32];
+        size_t n;
 
         if (w > r.x + r.w - x)
             w = r.x + r.w - x;
+        n = strlen(tb->cols[c].title);
+        if (n >= sizeof up)
+            n = sizeof up - 1;
+        for (size_t k = 0; k < n; k++)
+            up[k] = (char)toupper((unsigned char)tb->cols[c].title[k]);
+        up[n] = '\0';
         if (tb->cols[c].right)
-            tui_printf(t, x, r.y, w, TUI_LABEL, "%*s", w, tb->cols[c].title);
+            tui_printf(t, x, r.y, w, TUI_LABEL, "%*s", w, up);
         else
-            tui_printf(t, x, r.y, w, TUI_LABEL, "%-*s", w, tb->cols[c].title);
+            tui_printf(t, x, r.y, w, TUI_LABEL, "%-*s", w, up);
         x += tb->cols[c].width;
         if (c + 1 < tb->ncols)
             x += 1;
@@ -907,29 +931,50 @@ bool tui_input_key(struct tui_input *in, int key) {
 /* ---- progress and status -------------------------------------------- */
 
 void tui_progress(struct tui *t, int x, int y, int width, int pct) {
-    if (width < 1)
-        return;
-    int fill = pct < 0 ? 0 : pct * width / 100;
+    tui_style st;
+    int fill, room, i;
 
-    if (fill > width)
-        fill = width;
-    tui_style st = pct < 0    ? TUI_STYLE(7, 0, TUI_DIM)
-                   : pct < 70 ? TUI_GOOD
-                   : pct < 85 ? TUI_WARN
-                              : TUI_BAD;
-    for (int i = 0; i < width; i++)
-        tui_put(t, x + i, y, i < fill ? "#" : "-", 1,
-                i < fill ? st : TUI_STYLE(7, 0, TUI_DIM));
+    if (width < 4)
+        return;
+    room = width - 2;
+    fill = pct < 0 ? 0 : pct * room / 100;
+    if (fill > room)
+        fill = room;
+    st = pct < 0    ? TUI_META
+         : pct < 70 ? TUI_GOOD
+         : pct < 85 ? TUI_WARN
+                    : TUI_BAD;
+    tui_put(t, x, y, "[", 1, TUI_META);
+    for (i = 0; i < room; i++)
+        tui_put(t, x + 1 + i, y, i < fill ? "=" : " ", 1,
+                i < fill ? st : TUI_META);
+    tui_put(t, x + width - 1, y, "]", 1, TUI_META);
+}
+
+void tui_hints(struct tui *t, int x, int y, int maxw,
+               const struct tui_hint *hints, int n) {
+    for (int i = 0; i < n; i++) {
+        int kl = (int)strlen(hints[i].key);
+        int ll = (int)strlen(hints[i].label);
+
+        if (x + kl + ll + 4 > maxw)
+            break;
+        tui_put(t, x, y, " ", 1, TUI_META);
+        tui_printf(t, x + 1, y, kl, TUI_KEYCAP, "%s", hints[i].key);
+        tui_put(t, x + 1 + kl, y, " ", 1, TUI_META);
+        tui_printf(t, x + 2 + kl, y, ll, TUI_META, "%s", hints[i].label);
+        x += kl + ll + 3;
+    }
 }
 
 void tui_statusbar(struct tui *t, const char *left, const char *right) {
     int y = t->h - 1;
 
-    tui_fill(t, 0, y, t->w, 1, ' ', TUI_TITLE);
+    tui_fill(t, 0, y, t->w, 1, ' ', TUI_BAR);
     if (left != NULL)
-        tui_printf(t, 1, y, t->w - 2, TUI_TITLE, "%s", left);
+        tui_printf(t, 1, y, t->w - 2, TUI_PLAIN, "%s", left);
     if (right != NULL) {
         int n = (int)strlen(right);
-        tui_printf(t, t->w - 1 - n, y, n, TUI_TITLE, "%s", right);
+        tui_printf(t, t->w - 1 - n, y, n, TUI_PLAIN, "%s", right);
     }
 }
