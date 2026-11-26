@@ -1,6 +1,10 @@
 ztop
 src/*.o
 tests/test_vsm
-tests/demo_tui
+tui/*.o
+tui/libtui.a
+tui/test_tui
+tui/demo
 CEEDUMP.*
 *.lst
+compile_commands.json

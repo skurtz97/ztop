@@ -1,0 +1,123 @@
+---
+# Checks for zash.  Run with `make tidy`.  Every check named here either
+# finds real bugs in a shell (memory, signals, integer handling) or keeps the
+# code in the style of the rest of the tree.  Checks that disagree with the
+# project's choices are switched off below, with the reason.
+Checks: >
+  -*,
+  bugprone-*,
+  clang-analyzer-*,
+  cert-*,
+  misc-*,
+  performance-*,
+  portability-*,
+  readability-*,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-assignment-in-if-condition,
+  -bugprone-branch-clone,
+  -bugprone-narrowing-conversions,
+  -bugprone-reserved-identifier,
+  -cert-dcl37-c,
+  -cert-dcl51-cpp,
+  -cert-err33-c,
+  -cert-err34-c,
+  -cert-msc24-c,
+  -cert-msc33-c,
+  -clang-analyzer-optin.performance.Padding,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  -misc-include-cleaner,
+  -misc-no-recursion,
+  -readability-braces-around-statements,
+  -readability-function-cognitive-complexity,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-else-after-return,
+  -readability-isolate-declaration,
+  -readability-non-const-parameter,
+  -readability-avoid-unconditional-preprocessor-if,
+  -bugprone-multi-level-implicit-pointer-conversion,
+  -readability-avoid-nested-conditional-operator,
+  -readability-uppercase-literal-suffix,
+  -readability-math-missing-parentheses,
+  -bugprone-suspicious-string-compare,
+  -bugprone-not-null-terminated-result,
+  -clang-analyzer-security.insecureAPI.strcpy,
+  -cert-err33-c,
+  -cert-str34-c,
+  -bugprone-signal-handler,
+  -cert-sig30-c,
+  -bugprone-switch-missing-default-case,
+  -misc-header-include-cycle,
+  -readability-redundant-declaration,
+  -readability-named-parameter,
+  -readability-suspicious-call-argument,
+  -readability-function-size,
+  -readability-inconsistent-declaration-parameter-name,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -performance-no-int-to-ptr
+
+# Not enabled, on purpose:
+#   bugprone-easily-swappable-parameters  (sb_put(b, s, n) style is fine)
+#   bugprone-assignment-in-if-condition   (the tree uses `if ((x = f()))`
+#                                          rarely and deliberately)
+#   cert-err33-c        (unchecked close(), signal() and fflush() are
+#                        deliberate on cleanup paths)
+#   cert-err34-c        (parse_long wraps strtol with its own checks)
+#   cert-msc24-c/33-c   (asks for _s functions and warns about asctime;
+#                        neither exists on z/OS)
+#   misc-no-recursion   (a tree-walking evaluator recurses by design; the
+#                        depth is bounded by stack_low())
+#   readability-braces-around-statements
+#                       (one-line if bodies are the house style; the
+#                        .clang-format keeps them on their own line)
+#   bugprone-multi-level-implicit-pointer-conversion
+#                       (the qsort() comparison idiom)
+#   bugprone-suspicious-string-compare
+#                       (`!strcmp(a, b)` is the house idiom for equality)
+#   readability-avoid-nested-conditional-operator, ...-literal-suffix,
+#   ...-math-missing-parentheses
+#                       (style choices the tree does not follow)
+#   readability-magic-numbers, readability-identifier-length
+#                       (noise in a parser and a bit-twiddling arithmetic
+#                        scanner)
+
+WarningsAsErrors: ''
+HeaderFilterRegex: '^.*/src/.*\.h$'
+FormatStyle: file
+SystemHeaders: false
+
+CheckOptions:
+  # ---- naming: snake_case everywhere, UPPER_CASE for constants ----------
+  readability-identifier-naming.FunctionCase: lower_case
+  readability-identifier-naming.VariableCase: lower_case
+  readability-identifier-naming.ParameterCase: lower_case
+  readability-identifier-naming.LocalVariableCase: lower_case
+  readability-identifier-naming.GlobalVariableCase: lower_case
+  readability-identifier-naming.StructCase: lower_case
+  readability-identifier-naming.UnionCase: lower_case
+  readability-identifier-naming.EnumCase: lower_case
+  readability-identifier-naming.MemberCase: lower_case
+  readability-identifier-naming.TypedefCase: lower_case
+  readability-identifier-naming.MacroDefinitionCase: UPPER_CASE
+  readability-identifier-naming.EnumConstantCase: UPPER_CASE
+  readability-identifier-naming.GlobalConstantCase: lower_case
+  # `constexpr` is the C23 replacement for a `#define` constant, so it keeps
+  # the macro spelling: CSI_FIELD_LEN, MVS_DSN_MAX.  A local
+  # `static constexpr` table is a variable in everything but storage.
+  readability-identifier-naming.ConstantCase: lower_case
+  readability-identifier-naming.ConstantIgnoredRegexp: '^[A-Z][A-Z0-9_]*$'
+  readability-identifier-naming.GlobalConstantIgnoredRegexp: '^[A-Z][A-Z0-9_]*$'
+  # A system macro that starts with an underscore is the system's spelling.
+  readability-identifier-naming.MacroDefinitionIgnoredRegexp: '^_.*$'
+  # Header guards look like ZASH_SHELL_H.
+  llvm-header-guard.HeaderFileExtensions: 'h'
+
+  # ---- readability -------------------------------------------------------
+  readability-implicit-bool-conversion.AllowIntegerConditions: true
+  readability-implicit-bool-conversion.AllowPointerConditions: true
+
+  # ---- bugprone / misc ---------------------------------------------------
+  bugprone-signed-char-misuse.CharTypdefsToIgnore: ''
+  bugprone-sizeof-expression.WarnOnSizeOfIntegerExpression: true
+  misc-unused-parameters.StrictMode: false
+...

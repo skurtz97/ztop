@@ -9,22 +9,19 @@
 static unsigned char buf[8192];
 static unsigned len;
 
-static void put8(unsigned v)
-{
+static void put8(unsigned v) {
     if (len < sizeof buf)
         buf[len++] = (unsigned char)v;
 }
 
-static void put32(uint32_t v)
-{
+static void put32(uint32_t v) {
     put8(v >> 24);
     put8(v >> 16);
     put8(v >> 8);
     put8(v);
 }
 
-static void desc(unsigned id, unsigned flags, uint32_t tcb, unsigned dlen)
-{
+static void desc(unsigned id, unsigned flags, uint32_t tcb, unsigned dlen) {
     put8(0);
     put8(dlen);
     put8(id);
@@ -34,22 +31,23 @@ static void desc(unsigned id, unsigned flags, uint32_t tcb, unsigned dlen)
         put8(0);
 }
 
-static void block(uint32_t addr, uint32_t blen)
-{
+static void block(uint32_t addr, uint32_t blen) {
     put32(addr);
     put32(blen);
 }
 
-static int fail_line(int line, const char *what)
-{
+static int fail_line(int line, const char *what) {
     (void)fprintf(stderr, "test_vsm.c:%d: %s\n", line, what);
     return 1;
 }
 
-#define CHECK(c) do { if (!(c)) return fail_line(__LINE__, #c); } while (0)
+#define CHECK(c)                                                               \
+    do {                                                                       \
+        if (!(c))                                                              \
+            return fail_line(__LINE__, #c);                                    \
+    } while (0)
 
-static int test_csa(void)
-{
+static int test_csa(void) {
     struct vsm_info v;
 
     len = 0;
@@ -90,8 +88,7 @@ static int test_csa(void)
     return 0;
 }
 
-static int test_merge(void)
-{
+static int test_merge(void) {
     struct vsm_info v;
 
     len = 0;
@@ -111,8 +108,7 @@ static int test_merge(void)
     return 0;
 }
 
-static int test_pvt(void)
-{
+static int test_pvt(void) {
     struct vsm_info v;
 
     len = 0;
@@ -134,8 +130,7 @@ static int test_pvt(void)
     return 0;
 }
 
-static int test_unalloc(void)
-{
+static int test_unalloc(void) {
     struct vsm_info v;
 
     len = 0;
@@ -161,8 +156,7 @@ static int test_unalloc(void)
     return 0;
 }
 
-static int test_bad(void)
-{
+static int test_bad(void) {
     struct vsm_info v;
 
     /* descriptor length below the documented minimum */
@@ -214,8 +208,7 @@ static int test_bad(void)
     return 0;
 }
 
-int main(void)
-{
+int main(void) {
     int rc = 0;
 
     rc |= test_csa();
