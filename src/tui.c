@@ -16,23 +16,11 @@
 
 #ifdef __MVS__
 #define ESCS "\x27"      /* EBCDIC ESC; the tty converts it to 0x1b */
+#define ESC_CHAR 0x27u    /* what a key press of ESC looks like here */
 #else
 #define ESCS "\x1b"
-#endif
-
-/* Input is not converted: keys and cursor reports arrive EBCDIC even in
- * raw mode, so every read is translated before it is looked at. */
 #define ESC_CHAR 0x1bu
-
-static void to_ascii(unsigned char *b, size_t n)
-{
-#ifdef __MVS__
-    __e2a_l((char *)b, n);
-#else
-    (void)b;
-    (void)n;
 #endif
-}
 
 #define ALT_ON ESCS "[?1049h"
 #define ALT_OFF ESCS "[?1049l"
@@ -159,7 +147,6 @@ static bool cpr_size(int in, int outfd, int *w, int *h)
         ssize_t k = read(in, b + n, sizeof b - (size_t)n);
         if (k <= 0)
             continue;
-        to_ascii(b + n, (size_t)k);
         for (ssize_t i = 0; i < k; i++) {
             unsigned char c = b[n + (size_t)i];
             if (!esc) {
@@ -560,7 +547,6 @@ int tui_key(struct tui *t, int timeout_ms)
                 continue;
             return TUI_KEY_ESC;
         }
-        to_ascii(t->in + t->inlen, (size_t)n);
         t->inlen += (int)n;
     }
 }
