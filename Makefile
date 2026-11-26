@@ -30,10 +30,13 @@ TESTFLAGS = -std=c17 -g -O1 -Wall -Wextra -Wshadow -Wpedantic \
 # unquoted word as a syntax error.
 LDFLAGS = -Wl,'-bAC(1)'
 
-# The .S suffix sends the stub through the compiler and its integrated
-# assembler, which reads the ASCII source directly; a separate `as`
-# would need the file tagged and converted first.
-SRC = src/ztop.c src/vsm.c src/tui.c src/zvslist.S
+# The .S suffix sends the stub through clang's preprocessor; -P drops
+# the line markers HLASM would read as statements, and -fno-integrated-as
+# hands the result to HLASM.  That path writes its own tagged temporary,
+# so the checked-out ASCII source needs no chtag first.
+ASFLAGS = -fno-integrated-as -Xpreprocessor -P
+SRC = src/ztop.c src/vsm.c src/tui.c
+OBJ = src/zvslist.o
 HDR = src/vsm.h src/tui.h
 
 all:
@@ -41,8 +44,11 @@ all:
 	    { echo "ztop builds only on z/OS; this tree is a backup copy"; exit 1; }
 	$(MAKE) ztop
 
-ztop: $(SRC) $(HDR)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRC)
+ztop: $(SRC) $(OBJ) $(HDR)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRC) $(OBJ)
+
+src/zvslist.o: src/zvslist.S
+	$(CC) $(CFLAGS) $(ASFLAGS) -c -o $@ src/zvslist.S
 
 check: ztop
 	./ztop
@@ -58,4 +64,4 @@ demo: tests/demo_tui.c src/tui.c src/tui.h
 	$(TESTCC) $(TESTFLAGS) -o tests/demo_tui tests/demo_tui.c src/tui.c
 
 clean:
-	rm -f ztop tests/test_vsm tests/demo_tui
+	rm -f ztop $(OBJ) tests/test_vsm tests/demo_tui
