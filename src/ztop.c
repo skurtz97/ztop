@@ -448,6 +448,8 @@ static void draw_storage(struct tui *t, struct app *a) {
     tui_printf(t, 1, 4, t->w - 2, TUI_PLAIN,
                "used %s  free %s  mapped %s  total %s  use %s  blocks %u", used,
                freed, mapped, total, pcbuf, v->blocks);
+    if (p >= 0)
+        tui_progress(t, t->w - 14, 4, 12, p);
     tui_table_draw(t, r, &a->storage, v->nsub, storage_cell, NULL, a);
 
     if (a->err[a->sub][0] != '\0')
@@ -493,27 +495,38 @@ static void draw_jobs(struct tui *t, struct app *a) {
 }
 
 static void draw_help(struct tui *t) {
-    int w = t->w < 56 ? t->w - 2 : 54;
-    int h = 16;
+    int w = t->w < 64 ? t->w - 2 : 62;
+    int h = 19;
     int x = (t->w - w) / 2;
     int y = (t->h - h) / 2;
 
+    if (y < 0)
+        y = 0;
     tui_fill(t, x, y, w, h, ' ', TUI_PLAIN);
     tui_box(t, x, y, w, h, TUI_LABEL);
     tui_printf(t, x + 2, y + 1, w - 4, TUI_TITLE, "ztop keys");
-    tui_printf(t, x + 2, y + 3, w - 4, TUI_PLAIN, "q      quit");
-    tui_printf(t, x + 2, y + 4, w - 4, TUI_PLAIN, "TAB    next view");
+
+    tui_printf(t, x + 2, y + 3, w - 4, TUI_LABEL, "views");
+    tui_printf(t, x + 2, y + 4, w - 4, TUI_PLAIN,
+               "TAB / Shift-TAB   next / previous view");
     tui_printf(t, x + 2, y + 5, w - 4, TUI_PLAIN,
-               "1-3    storage, system, jobs");
-    tui_printf(t, x + 2, y + 6, w - 4, TUI_PLAIN, "1-4    CSA, SQA, LSQA, PVT");
-    tui_printf(t, x + 2, y + 7, w - 4, TUI_PLAIN, "p      pause refresh");
-    tui_printf(t, x + 2, y + 8, w - 4, TUI_PLAIN, "r      refresh now");
-    tui_printf(t, x + 2, y + 9, w - 4, TUI_PLAIN, "+ -    interval up / down");
-    tui_printf(t, x + 2, y + 10, w - 4, TUI_PLAIN, "j k    move the selection");
-    tui_printf(t, x + 2, y + 11, w - 4, TUI_PLAIN, "up dn  same");
-    tui_printf(t, x + 2, y + 12, w - 4, TUI_PLAIN, "g G    first / last");
-    tui_printf(t, x + 2, y + 13, w - 4, TUI_PLAIN, "?      close help");
-    tui_printf(t, x + 2, y + 14, w - 4, TUI_PLAIN, "1-4    inside storage");
+               "1 2 3 4           inside STORAGE: CSA SQA LSQA PVT");
+    tui_printf(t, x + 2, y + 6, w - 4, TUI_PLAIN,
+               "click a tab       same, with the mouse");
+
+    tui_printf(t, x + 2, y + 8, w - 4, TUI_LABEL, "moving");
+    tui_printf(t, x + 2, y + 9, w - 4, TUI_PLAIN, "j k / arrows      one row");
+    tui_printf(t, x + 2, y + 10, w - 4, TUI_PLAIN, "PgUp PgDn         a page");
+    tui_printf(t, x + 2, y + 11, w - 4, TUI_PLAIN,
+               "g G / Home End    first / last");
+    tui_printf(t, x + 2, y + 12, w - 4, TUI_PLAIN,
+               "wheel, click      scroll, select a row");
+
+    tui_printf(t, x + 2, y + 14, w - 4, TUI_LABEL, "the screen");
+    tui_printf(t, x + 2, y + 15, w - 4, TUI_PLAIN,
+               "p pause   r refresh now   + - interval 1..60 s");
+    tui_printf(t, x + 2, y + 16, w - 4, TUI_PLAIN,
+               "? close this help         q quit");
 }
 
 static void view(void *model, struct tui *t) {
@@ -535,7 +548,10 @@ static void view(void *model, struct tui *t) {
     }
     if (a->help)
         draw_help(t);
-    tui_statusbar(t, "q quit  TAB view  j/k move  r refresh  p pause  ? help",
+    tui_statusbar(t,
+                  a->tab == 0   ? "TAB view  1-4 area  j/k move  wheel  ? help"
+                  : a->tab == 1 ? "TAB view  r refresh  ? help"
+                                : "TAB view  j/k move  PgUp/PgDn  ? help",
                   a->paused ? "PAUSED" : "");
 }
 
@@ -577,6 +593,65 @@ static void usage(FILE *f) {
         "  -h  this text\n");
 }
 
+static void wheel(struct app *a, int dir, int height) {
+    if (a->tab == 0)
+        tui_viewport_move(&a->storage.vp, dir, a->info[a->sub].nsub, height);
+    else if (a->tab == 2)
+        tui_viewport_move(&a->jobs.vp, dir, a->sys.njobs, height);
+}
+
+/** @brief Tabs, sub-tabs, table rows and the wheel. */
+static bool mouse_event(struct tui_app *app, const struct tui_msg *m) {
+    static const char *const views[3] = {"1 STORAGE", "2 SYSTEM", "3 JOBS"};
+    struct app *a = app->model;
+    const struct tui_mouse *mo = &m->mouse;
+    int idx, row, height;
+
+    height = (a->tab == 0 ? m->h - 8 : m->h - 6);
+    if (height < 1)
+        height = 1;
+    if (mo->button == 64 || mo->button == 65) {
+        wheel(a, mo->button == 64 ? -1 : 1, height);
+        return true;
+    }
+    if (mo->release || mo->button != 0)
+        return false;
+    if (mo->y == 1) {
+        idx = tui_tabs_hit(mo->x, views, 3);
+        if (idx < 0)
+            return false;
+        a->tab = idx;
+        return true;
+    }
+    if (a->tab == 0 && mo->y == 3) {
+        if (mo->x >= 1 && mo->x <= 5)
+            a->sub = 0;
+        else if (mo->x >= 7 && mo->x <= 11)
+            a->sub = 1;
+        else if (mo->x >= 13 && mo->x <= 18)
+            a->sub = 2;
+        else if (mo->x >= 20 && mo->x <= 24)
+            a->sub = 3;
+        else
+            return false;
+        return true;
+    }
+    if (a->tab == 0 && mo->y >= 6) {
+        row = a->storage.vp.top + (mo->y - 6);
+        if (row < a->info[a->sub].nsub) {
+            a->storage.vp.sel = row;
+            return true;
+        }
+    } else if (a->tab == 2 && mo->y >= 4) {
+        row = a->jobs.vp.top + (mo->y - 4);
+        if (row < a->sys.njobs) {
+            a->jobs.vp.sel = row;
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool update(struct tui_app *app, const struct tui_msg *m) {
     struct app *a = app->model;
     int rows, height;
@@ -594,6 +669,8 @@ static bool update(struct tui_app *app, const struct tui_msg *m) {
     }
     if (m->type == TUI_MSG_RESIZE)
         return true;
+    if (m->type == TUI_MSG_MOUSE)
+        return mouse_event(app, m);
     if (m->type != TUI_MSG_KEY)
         return false;
 
