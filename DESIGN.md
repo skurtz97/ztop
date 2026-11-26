@@ -9,34 +9,24 @@ the only documented interface that reports allocated storage by subpool for
 CSA, SQA, LSQA and the private area.  Per subpool it returns the 4K-multiple
 blocks that hold allocations and the bytes allocated inside them.
 
-## Authorization: APF, by design
+## Authorization
 
-This is an administrator's utility, so it is APF-authorized and uses
-`VSMLIST` with `LINKAGE=SYSTEM`, the path the reference opens to an
-authorized program (problem state, PSW key 8-15, `LINKAGE=BRANCH` would
-want supervisor state and key 0 and is not used).
+Not needed, as it turned out.  `VSMLIST` was called with the default
+`LINKAGE=SYSTEM` (PC-number path, problem state, PSW key 8) from an
+ordinary HFS executable with no APF bit, and returned data.  `D PROG,APF`
+on CBT lists datasets only, so no HFS path could have been authorized
+anyway.
 
-Measured once without APF, on z/OS 3.1 (29.00), before the decision, and
-kept here so nobody repeats it:
+The earlier "SC78 R=90 on an unauthorized program" reading was wrong: the
+abend came from a malformed work area.  `WKAREA=(4,5)` is an address
+constant, not a register pair, so the macro stored the literal 4 as the
+subpool and the literal 5 as the work-area length, then wrote its control
+block over the request.  With `WKAREA=((4),(5))` the service is called
+correctly and does not look at the caller's authority.
 
-- `LINKAGE=SYSTEM`: `Possible Bad Branch` through the macro's PC-number path
-  (`L 15,16(0,0)` CVT, `+772` SVT, `+88`, `PC 0(15)`).
-- `LINKAGE=BRANCH`: 0C1 at the `CVT+1140` branch entry, which is what the
-  reference promises for supervisor-state-only.
-- `LINKAGE=SVC` (SVC 72): 0C4 inside the service.
-
-What the installation needs, none of it in the tool:
-
-- an APF-listed load path.  `D PROG,APF` on CBT lists 54 entries and every
-  one is a partitioned data set -- no HFS directory is APF-authorized, so
-  one has to be added (PROGxx `APF ADD DSNAME('/some/dir')`, or
-  `SETPROG APF,ADD,DSNAME=...` at runtime) before an executable in the z/OS
-  UNIX file system can be marked;
-- `extattr +ap` on the executable that lives there;
-- a review of the program itself, because everything it does now runs with
-  the installation's authority.  ztop only reads VSM data and writes to
-  standard output; it must not grow a feature that takes a path, a command
-  or a name from an untrusted caller without stripping authority first.
+What still matters is that the program only reads VSM data and writes to
+standard output; it must not grow a feature that takes a path, a command
+or a name from an untrusted caller.
 
 ## What ZOAU already provides
 
@@ -59,26 +49,38 @@ Rejected as sources, and why:
 
 ## Why assembler, and only there
 
-`VSMLIST` is a macro: it builds a parameter list and issues an SVC, and
-there is no C-visible entry point.  So `src/zvslist.s` is the whole of the
-system interface, one page, and everything else -- parsing, formatting,
+`VSMLIST` is a macro: it builds a parameter list and calls a PC service,
+and there is no C-visible entry point.  So `src/zvslist.S` is the whole of
+the system interface, one page, and everything else -- parsing, formatting,
 options -- is C23.  No control-block offsets are written down anywhere:
-the macro brings its own.
+the macro brings its own.  The `.S` suffix makes ibm-clang assemble the
+file in-process; a separate `as` wants the source tagged and converted
+to EBCDIC first.
 
 The C side calls it with `#pragma linkage(zvslist, OS)`; `OS_UPSTACK`,
 `__attribute__((OS))` and `OS31_NOSTACK` all abended at `-m32`, plain `OS`
 does not.  HLASM upcases the entry name, so the C side binds `ZVSLIST` with
 `__asm__("ZVSLIST")`.
 
-Two things about the stub that are not obvious and cost a day each:
+Three things about the stub that are not obvious and cost a day each:
 
 - In an XPLINK load module an assembler CSECT is read-only.  Reading a word
-  out of it works; the first store takes a 0C4.  So the save area and every
-  scratch word live in the caller's block (`struct zreq`), and the CSECT
-  holds only code, the base register and the literal pool.
+out of it works; the first store takes a 0C4.  So the save area and every
+scratch word live in the caller's block (`struct zreq`); the CSECT holds
+only code and the literal pool.
+- In an XPLINK load module the binder turns `=A(zvslist)` into a function
+descriptor, and the loader fills that with an address that is not the
+CSECT.  Loading it into the base register made every literal and branch
+go elsewhere (0C1, 0C4 or 0C7 depending on what happened to be there).
+`BALR 12,0` plus the assembler's own `USING` is the whole of the base
+setup; no address constant is needed.
 - `WKAREA=(4,5)` is read as an address constant, not a register: the macro
-  then generates `LA 1,4` and stores its control block at address 12.  A
-  register operand needs the doubled form, `WKAREA=((4),5)`.
+then generates `LA 15,5` and stores the literal 5 as the length.  A
+register operand needs the doubled form, `WKAREA=((4),(5))`.
+
+`SPACE` is not a runtime operand of the macro: FREE and UNALLOC are two
+different expansions, which is why the stub branches to one or the other
+before issuing it.
 
 ## Language level
 
@@ -142,13 +144,14 @@ Three z/OS details are load-bearing:
 
 ## Open
 
-- Live confirmation.  The parser follows the documented layout and is
-  covered by synthetic data areas in `tests/test_vsm.c`, but no real
-  `VSMLIST` answer has been parsed yet: the executable is APF-marked and
-  still abends SC78 R=90 because no HFS directory is APF-listed.  The
-  first run on an authorized system is the acceptance test for the framing.
+- Live confirmation was the first acceptance test and passed: `ztop -a
+  csa`, `-a sqa`, `-a lsqa` and `-a pvt` returned data on CBT with the
+  parser reporting no warning.  The 4K-block, free-descriptor and
+  unallocated streams match the layout above.
 - Area sizes for SQA, LSQA and the private area.  `VSMLIST` reports
   allocation and free space, not the limit; a percentage there needs a
   different source, and none is planned.
 - `SP=PVT` output is already grouped by owning TCB, but the view still
   prints one list; per-TCB folding is a display change, not a data change.
+- The full-screen view has been exercised on a Linux pty only; the first
+  run over a real SSH terminal is still to do.

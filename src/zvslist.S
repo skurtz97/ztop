@@ -20,13 +20,16 @@
 * and the first store into it takes a 0C4.  Only the base register and
 * the literal pool stay here, and both are read-only.
 *
-* LINKAGE=SVC is used rather than the default SYSTEM: the PC-number
-* path through CVT+772/+88 branches off to a bad address here, the
-* branch entry does not.
+* No address constant is loaded into the base register: in an XPLINK
+* load module the binder turns =A(zvslist) into a function descriptor
+* and the loader fills it with an address that is not this CSECT, so
+* every literal and branch went to the wrong place.  BALR alone sets a
+* base the assembler can use.
 *
 * VSMLIST writes its control block into the first 32 bytes of the work
 * area and needs the register operand in doubled parentheses: with
-* WKAREA=(4,5) the macro generates "LA 1,4" and stores at address 12.
+* WKAREA=((4),5) the macro generates "LA 15,5" and stores the length
+* at address 12, but with WKAREA=((4),(5)) it stores R5.
 *
 * The return code at work+0 is the service's own state: it must be zero
 * before the first call, and left alone for the continuation calls.
@@ -40,7 +43,6 @@ zvslist  RMODE 24
          STM   14,12,12(13)
          BALR  12,0
          USING *,12
-         L     12,=A(zvslist)         the macro needs a literal pool
          L     2,0(1)                 R2 -> struct zreq
          LR    11,2                 R11 keeps it: services keep R11
          LA    10,24(,2)             our save area, in that block
@@ -63,21 +65,25 @@ zvslist  RMODE 24
          CHI   3,4
          BE    PVT
          B     OUT
-CSA      CHI   6,2
+CSA      CHI   6,1
+         BE    CSAF
+         CHI   6,2
          BE    CSAU
-         VSMLIST SP=CSA,WKAREA=((4),5)
+CSAF     VSMLIST SP=CSA,SPACE=FREE,WKAREA=((4),(5))
          B     DONE
-CSAU     VSMLIST SP=CSA,SPACE=UNALLOC,WKAREA=((4),5)
+CSAU     VSMLIST SP=CSA,SPACE=UNALLOC,WKAREA=((4),(5))
          B     DONE
-SQA      VSMLIST SP=SQA,WKAREA=((4),5)
+SQA      VSMLIST SP=SQA,SPACE=FREE,WKAREA=((4),(5))
          B     DONE
-LSQA     VSMLIST SP=LSQA,WKAREA=((4),5)
+LSQA     VSMLIST SP=LSQA,SPACE=FREE,WKAREA=((4),(5))
          B     DONE
-PVT      CHI   6,2
+PVT      CHI   6,1
+         BE    PVTF
+         CHI   6,2
          BE    PVTU
-         VSMLIST SP=PVT,WKAREA=((4),5)
+PVTF     VSMLIST SP=PVT,SPACE=FREE,WKAREA=((4),(5))
          B     DONE
-PVTU     VSMLIST SP=PVT,SPACE=UNALLOC,WKAREA=((4),5)
+PVTU     VSMLIST SP=PVT,SPACE=UNALLOC,WKAREA=((4),(5))
 DONE     LR    2,11                 the struct, kept in R11
          L     4,8(2)                 work area
          L     15,0(4)               service return code

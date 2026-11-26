@@ -10,20 +10,24 @@ subpool  key  blocks        used        free      mapped     largest     address
 CSF total: 17825792 bytes, 17121280 mapped (96.2% of mapped+unallocated)
 ```
 
-The numbers come from `VSMLIST`, the interface z/OS offers an authorized
-program for exactly this.  It is an assembler macro with no C equivalent, so
-`src/zvslist.s` issues it and `src/vsm.c` parses the answer; `src/tui.c` is
+The numbers come from `VSMLIST`, the interface z/OS offers for exactly
+this.  It is an assembler macro with no C equivalent, so
+`src/zvslist.S` issues it and `src/vsm.c` parses the answer; `src/tui.c` is
 the terminal layer and `src/ztop.c` is the command.
 
 ## Build
 
-z/OS only for the real binary, with IBM Open XL and HLASM in the path:
+z/OS only for the real binary, with IBM Open XL in the path:
 
 ```sh
-chtag -t -c ISO8859-1 Makefile   # after a checkout: make reads it as text
-make          # ibm-clang -std=c23 -m32, plus `as` for src/zvslist.s
-make apf      # then give the executable the APF bit
+make          # ibm-clang -std=c23 -m32; the .S is assembled in-process
+make check    # run it against each area
 ```
+
+No APF bit and no special directory: `VSMLIST` was called successfully
+from an ordinary HFS executable without `extattr`.  (An earlier build did
+abend SC78 R=90, but that was a malformed work area: the macro stores the
+length itself unless the register is doubly parenthesised.)
 
 The parser and the TUI framework have no z/OS dependency, so on any host
 with a C compiler and a terminal:
