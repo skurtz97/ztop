@@ -84,11 +84,14 @@ prompt.  There are three views, selected with `TAB`:
 | `+`/`-` | refresh 1..60 s |
 | `j`/`k`, arrows, `PgUp`/`PgDn`, `g`/`G` | move and scroll the selected table |
 | wheel, click a row | scroll, select a row |
+| `s`, `S` | next sort column, reverse it (the header shows both) |
+| `Enter` | every field of the selected subpool |
 | `?` | help |
 | `q` | quit |
 
 Each table remembers its own selection and scroll position, so switching
-views does not lose your place.  The design, including why the data
+views does not lose your place.  The status line shows the subpool or
+address space under the cursor.  The design, including why the data
 sources are what they are, is in [DESIGN.md](DESIGN.md).
 
 ## What it is not
