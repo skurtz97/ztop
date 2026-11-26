@@ -231,7 +231,7 @@ static void print_area(const struct vsm_info *v)
                      (unsigned long long)v->unalloc, v->unalloc_blocks,
                      (unsigned long long)v->largest_unalloc);
         for (int i = 0; i < v->nregion && i < VSM_MAX_REGION; i++)
-            (void)printf("%s%08X+%08X", i == 0 ? " regions" : " ",
+            (void)printf("%s %08X+%08X", i == 0 ? " regions" : ",",
                          (unsigned)v->region[i].addr,
                          (unsigned)v->region[i].len);
         (void)printf("\n");

@@ -4,10 +4,13 @@ How much storage is in each area of a z/OS system -- CSA, SQA, LSQA, and
 the private area -- from a z/OS UNIX shell over SSH.
 
 ```text
-subpool  key  blocks        used        free      mapped     largest     address
-227        8      12     1048576      196608     1245184     1048576  00A00000-00B30000
-231        8      41    16777216     2097152    18874368     4194304  00C00000-02C00000
-CSF total: 17825792 bytes, 17121280 mapped (96.2% of mapped+unallocated)
+area csa: used 71014984 free 525752 mapped 71540736 blocks 326 unallocated 194883584 total 266424320 use 27%
+ sp key   blks       used       free     mapped    largest           address
+227   0     29    1607848      59224    1667072     335872 00B53000-17CF9000
+228   0     54    2149808      74320    2224128     823296 00B3F000-17CFE000
+231   0     77    3354952      65208    3420160    1077248 00B54000-17CE8000
+241   0    166   63902376     327000   64229376   26689536 00B38000-17D00000
+unallocated 194883584 bytes in 5 blocks, largest 191475712 regions 00800000+0039C000, 08287000+0FA79000
 ```
 
 The numbers come from `VSMLIST`, the interface z/OS offers for exactly

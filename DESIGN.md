@@ -153,5 +153,7 @@ Three z/OS details are load-bearing:
   different source, and none is planned.
 - `SP=PVT` output is already grouped by owning TCB, but the view still
   prints one list; per-TCB folding is a display change, not a data change.
-- The full-screen view has been exercised on a Linux pty only; the first
-  run over a real SSH terminal is still to do.
+- The full-screen view has been exercised on a z/OS pty: area switching,
+  scrolling, help, quit and the cursor restore.  What has not been seen is
+  a real xterm over SSH answering the size query; a terminal that ignores
+  `ESC[6n` falls back to `COLUMNS`/`LINES` or 80x24.
