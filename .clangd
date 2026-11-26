@@ -1,0 +1,13 @@
+# clangd settings for ztop.  There is no compile_commands.json here: the
+# tree builds on z/OS with make and on Linux for the portable tests, so the
+# flags are repeated here for the editor.
+CompileFlags:
+  Add: [-Itui, -D_XOPEN_SOURCE=500, -D_POSIX_C_SOURCE=200112L,
+        -Wall, -Wextra, -Wshadow, -Wpedantic]
+Diagnostics:
+  UnusedIncludes: Strict
+  MissingIncludes: Strict
+Index:
+  Background: Build
+InlayHints:
+  Enabled: false

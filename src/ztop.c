@@ -1,6 +1,10 @@
 /**
  * @file ztop.c
- * @brief Storage overview for z/OS: one-shot reports and a full-screen view.
+ * @brief What z/OS has where: storage by subpool, the system, and jobs.
+ *
+ * One-shot reports for scripts and a full-screen view for people.  The
+ * view is built on libtui, which knows nothing about z/OS: ztop supplies
+ * the model, the messages and the tables.
  */
 #include <stdbool.h>
 #include <stddef.h>
@@ -8,13 +12,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/utsname.h>
 #include <time.h>
 #include <unistd.h>
 
+#include "sys.h"
 #include "tui.h"
 #include "vsm.h"
 
-#define ZTOP_VERSION "0.2"
+#define ZTOP_VERSION "0.3"
 #define WORK_SIZE (1024u * 1024u)
 
 #if defined(__MVS__)
@@ -23,8 +29,9 @@
 extern int zvslist(void *) __asm__("ZVSLIST");
 #pragma linkage(zvslist, OS)
 
-/* The 31-bit request block.  R13 is saved by the stub, so the save area has
- * to live in storage the C compiler gives us, not in the read-only CSECT. */
+/* The 31-bit request block.  R13 is saved by the stub, so the save area
+ * has to live in storage the C compiler gives us, not in the read-only
+ * CSECT. */
 struct zreq {
     int area;
     unsigned len;
@@ -41,11 +48,11 @@ _Static_assert(offsetof(struct zreq, space) == 168, "zreq.space");
 static unsigned char work[WORK_SIZE] __attribute__((aligned(8)));
 #endif
 
-static const char *const area_name[] = { "csa", "sqa", "lsqa", "pvt" };
-static const char *const area_upper[] = { "CSA", "SQA", "LSQA", "PVT" };
+static const char *const area_name[] = {"csa", "sqa", "lsqa", "pvt"};
+static const char *const area_upper[] = {"CSA", "SQA", "LSQA", "PVT"};
 
-static void human(uint64_t n, char *buf, size_t len)
-{
+/** @brief A byte count in K, M or G, whichever fits best. */
+static void human(uint64_t n, char *buf, size_t len) {
     if (n >= (1ULL << 30))
         (void)snprintf(buf, len, "%.1fG", (double)n / (double)(1ULL << 30));
     else if (n >= (1ULL << 20))
@@ -57,58 +64,47 @@ static void human(uint64_t n, char *buf, size_t len)
 }
 
 #if defined(__MVS__)
-static void hexdump(const char *tag, const unsigned char *p, unsigned len,
-                    unsigned max)
-{
+static void hexdump(const char *tag, const unsigned char *p, unsigned int len,
+                    unsigned int max) {
+    unsigned int i, j;
+
     if (len > max)
         len = max;
-    for (unsigned i = 0; i < len; i += 16) {
+    for (i = 0; i < len; i += 16) {
         (void)fprintf(stderr, "%s %04X:", tag, i);
-        for (unsigned j = 0; j < 16 && i + j < len; j++)
+        for (j = 0; j < 16 && i + j < len; j++)
             (void)fprintf(stderr, " %02X", p[i + j]);
         (void)fputc('\n', stderr);
     }
 }
 
 static void dump_work(const struct vsm_info *v, const unsigned char *workp,
-                      const unsigned char *data, unsigned len, int rc)
-{
+                      const unsigned char *data, unsigned int len, int rc) {
     (void)fprintf(stderr, "ztop: VSMLIST %s %s rc=%d data=%08X len=%u\n",
                   area_name[v->area - 1],
                   v->space == VSM_UNALLOC ? "UNALLOC" : "FREE", rc,
-                  (unsigned)(uintptr_t)data, len);
+                  (unsigned int)(uintptr_t)data, len);
     hexdump("work", workp, 32, 32);
     if (data != NULL && len > 0)
         hexdump("data", data, len, 256);
 }
-#endif
 
-static int pct(const struct vsm_info *v)
-{
-    uint64_t total;
-
-    if (!v->unalloc_valid || v->area != VSM_CSA)
-        return -1;
-    total = v->foot + v->unalloc;
-    if (total == 0)
-        return 0;
-    return (int)((v->used * 100u + total / 2) / total);
-}
-
-#if defined(__MVS__)
-static bool fetch_one(struct vsm_info *v, int area, int space, bool dump)
-{
+static bool fetch_one(struct vsm_info *v, int area, int space, bool dump) {
     int calls = 0;
+    const unsigned char *data;
+    unsigned int len;
 
-    vsm_reset(v, (unsigned)area, (unsigned)space);
-    memset(work, 0, 4);                  /* return code must start at 0 */
+    vsm_reset(v, (unsigned int)area, (unsigned int)space);
+    memset(work, 0, 4); /* the return code must start at 0 */
     for (;;) {
+        struct zreq req = {0};
+        bool ok;
+
         if (++calls > 64) {
             (void)snprintf(v->err, sizeof v->err,
                            "VSMLIST did not finish after 64 calls");
             return false;
         }
-        struct zreq req = { 0 };
         req.area = area;
         req.space = space;
         req.len = WORK_SIZE;
@@ -116,12 +112,10 @@ static bool fetch_one(struct vsm_info *v, int area, int space, bool dump)
         req.rc = -1;
         (void)zvslist(&req);
         if (req.rc != 0 && req.rc != 4) {
-            (void)snprintf(v->err, sizeof v->err,
-                           "VSMLIST returned %d", req.rc);
+            (void)snprintf(v->err, sizeof v->err, "VSMLIST returned %d",
+                           req.rc);
             return false;
         }
-        const unsigned char *data;
-        unsigned len;
         if (!vsm_work_data(work, WORK_SIZE, &data, &len)) {
             (void)snprintf(v->err, sizeof v->err,
                            "VSMLIST work area has an unusable data pointer");
@@ -129,9 +123,8 @@ static bool fetch_one(struct vsm_info *v, int area, int space, bool dump)
         }
         if (dump)
             dump_work(v, work, data, len, req.rc);
-        bool ok = space == VSM_UNALLOC
-                      ? vsm_parse_unalloc(v, data, len)
-                      : vsm_parse_alloc(v, data, len);
+        ok = space == VSM_UNALLOC ? vsm_parse_unalloc(v, data, len)
+                                  : vsm_parse_alloc(v, data, len);
         if (!ok)
             return false;
         if (req.rc == 0)
@@ -140,8 +133,7 @@ static bool fetch_one(struct vsm_info *v, int area, int space, bool dump)
     }
 }
 #else
-static bool fetch_one(struct vsm_info *v, int area, int space, bool dump)
-{
+static bool fetch_one(struct vsm_info *v, int area, int space, bool dump) {
     (void)area;
     (void)space;
     (void)dump;
@@ -150,12 +142,12 @@ static bool fetch_one(struct vsm_info *v, int area, int space, bool dump)
 }
 #endif
 
-static bool collect_area(struct vsm_info *v, int area, bool dump)
-{
+static bool collect_area(struct vsm_info *v, int area, bool dump) {
     if (!fetch_one(v, area, VSM_FREE, dump))
         return false;
     if (area == VSM_CSA || area == VSM_PVT) {
         struct vsm_info u;
+
         if (fetch_one(&u, area, VSM_UNALLOC, dump)) {
             v->unalloc = u.unalloc;
             v->unalloc_blocks = u.unalloc_blocks;
@@ -170,15 +162,26 @@ static bool collect_area(struct vsm_info *v, int area, bool dump)
     return true;
 }
 
-static void print_area(const struct vsm_info *v)
-{
+/** @brief Fraction of the mapped area in use, or -1 when there is no total. */
+static int pct(const struct vsm_info *v) {
+    uint64_t total;
+
+    if (!v->unalloc_valid || v->area != VSM_CSA)
+        return -1;
+    total = v->foot + v->unalloc;
+    if (total == 0)
+        return 0;
+    return (int)((v->used * 100u + total / 2) / total);
+}
+
+static void print_area(const struct vsm_info *v) {
     const char *name = area_name[v->area - 1];
     bool pvt = v->area == VSM_PVT;
     int p = pct(v);
+    int i;
 
-    (void)printf("area %s: used %llu free %llu mapped %llu blocks %u",
-                 name, (unsigned long long)v->used,
-                 (unsigned long long)v->free,
+    (void)printf("area %s: used %llu free %llu mapped %llu blocks %u", name,
+                 (unsigned long long)v->used, (unsigned long long)v->free,
                  (unsigned long long)v->foot, v->blocks);
     if (v->area == VSM_CSA && v->unalloc_valid)
         (void)printf(" unallocated %llu total %llu use %d%%",
@@ -189,36 +192,34 @@ static void print_area(const struct vsm_info *v)
     (void)printf("\n");
 
     if (pvt)
-        (void)printf("%3s %3s %8s %5s %10s %10s %10s %10s %8s\n",
-                     "sp", "key", "tcb", "blks", "used", "free", "mapped",
-                     "largest", "addr");
+        (void)printf("%3s %3s %8s %5s %10s %10s %10s %10s %8s\n", "sp", "key",
+                     "tcb", "blks", "used", "free", "mapped", "largest",
+                     "addr");
     else
-        (void)printf("%3s %3s %6s %10s %10s %10s %10s %17s\n",
-                     "sp", "key", "blks", "used", "free", "mapped",
-                     "largest", "address");
+        (void)printf("%3s %3s %6s %10s %10s %10s %10s %17s\n", "sp", "key",
+                     "blks", "used", "free", "mapped", "largest", "address");
 
-    for (int i = 0; i < v->nsub; i++) {
+    for (i = 0; i < v->nsub; i++) {
         const struct vsm_subpool *s = &v->sub[i];
         char addr[32];
 
         if (s->blocks == 0)
             (void)snprintf(addr, sizeof addr, "-");
         else if (pvt)
-            (void)snprintf(addr, sizeof addr, "%08X", (unsigned)s->lo);
+            (void)snprintf(addr, sizeof addr, "%08X", (unsigned int)s->lo);
         else
-            (void)snprintf(addr, sizeof addr, "%08X-%08X",
-                           (unsigned)s->lo, (unsigned)s->hi);
+            (void)snprintf(addr, sizeof addr, "%08X-%08X", (unsigned int)s->lo,
+                           (unsigned int)s->hi);
         if (pvt)
             (void)printf("%3u %3u %08X %5u %10llu %10llu %10llu %10llu %s\n",
-                         s->id, s->key, (unsigned)s->tcb, s->blocks,
+                         s->id, s->key, (unsigned int)s->tcb, s->blocks,
                          (unsigned long long)s->used,
                          (unsigned long long)s->free,
                          (unsigned long long)s->foot,
                          (unsigned long long)s->largest, addr);
         else
-            (void)printf("%3u %3u %6u %10llu %10llu %10llu %10llu %s\n",
-                         s->id, s->key, s->blocks,
-                         (unsigned long long)s->used,
+            (void)printf("%3u %3u %6u %10llu %10llu %10llu %10llu %s\n", s->id,
+                         s->key, s->blocks, (unsigned long long)s->used,
                          (unsigned long long)s->free,
                          (unsigned long long)s->foot,
                          (unsigned long long)s->largest, addr);
@@ -230,251 +231,270 @@ static void print_area(const struct vsm_info *v)
         (void)printf("unallocated %llu bytes in %u blocks, largest %llu",
                      (unsigned long long)v->unalloc, v->unalloc_blocks,
                      (unsigned long long)v->largest_unalloc);
-        for (int i = 0; i < v->nregion && i < VSM_MAX_REGION; i++)
+        for (i = 0; i < v->nregion && i < VSM_MAX_REGION; i++)
             (void)printf("%s %08X+%08X", i == 0 ? " regions" : ",",
-                         (unsigned)v->region[i].addr,
-                         (unsigned)v->region[i].len);
+                         (unsigned int)v->region[i].addr,
+                         (unsigned int)v->region[i].len);
         (void)printf("\n");
     }
     if (v->err[0] != '\0')
         (void)printf("warning: %s\n", v->err);
 }
 
+static void print_system(const struct zsys *z) {
+    (void)printf(
+        "system %s  host %s  os %s  machine %s  address spaces %d/%u\n",
+        z->sysname, z->host, z->os, z->machine, z->njobs, z->slots);
+}
+
+static void print_jobs(const struct zsys *z) {
+    int i;
+
+    (void)printf("%4s %-8s %8s\n", "asid", "job", "ascb");
+    for (i = 0; i < z->njobs; i++)
+        (void)printf("%4u %-8s %08X\n", z->job[i].asid, z->job[i].name,
+                     (unsigned int)z->job[i].ascb);
+}
+
 struct app {
     struct vsm_info info[4];
     bool have[4];
     char err[4][160];
-    int sel;
-    bool all;
-    bool paused;
-    bool help;
+    struct zsys sys;
+    bool have_sys;
+    char sys_err[160];
     int interval;
     int collect_ms;
-    int scroll;
-    char host[80];
+    bool paused;
+    bool help;
+    int tab;
+    int sub;
+    struct tui_table storage;
+    struct tui_table jobs;
+    struct tui_app *tapp;
+    char host[65];
 };
 
-static int visible_rows(const struct tui *t)
-{
-    int n = t->h - 8;
-    return n < 1 ? 1 : n;
+static const struct tui_col storage_cols[] = {
+    {"SP", 3, true},       {"KY", 3, true},        {"BLKS", 6, true},
+    {"USED", 10, true},    {"FREE", 10, true},     {"MAPPED", 10, true},
+    {"LARGEST", 10, true}, {"ADDRESS", 17, false},
+};
+
+static const struct tui_col pvt_cols[] = {
+    {"SP", 3, true},       {"KY", 3, true},    {"BLKS", 5, true},
+    {"USED", 10, true},    {"FREE", 10, true}, {"MAPPED", 10, true},
+    {"LARGEST", 10, true}, {"TCB", 9, false},
+};
+
+static const struct tui_col job_cols[] = {
+    {"ASID", 4, true},
+    {"JOB", 8, false},
+    {"ASCB", 10, false},
+};
+
+static void storage_cell(void *ctx, int row, int col, char *buf, size_t len) {
+    const struct app *a = ctx;
+    const struct vsm_subpool *s = &a->info[a->sub].sub[row];
+    char u[16], f[16], m[16], l[16];
+
+    switch (col) {
+    case 0:
+        (void)snprintf(buf, len, "%u", s->id);
+        break;
+    case 1:
+        (void)snprintf(buf, len, "%u", s->key);
+        break;
+    case 2:
+        (void)snprintf(buf, len, "%u", s->blocks);
+        break;
+    case 3:
+        human(s->used, u, sizeof u);
+        (void)snprintf(buf, len, "%s", u);
+        break;
+    case 4:
+        human(s->free, f, sizeof f);
+        (void)snprintf(buf, len, "%s", f);
+        break;
+    case 5:
+        human(s->foot, m, sizeof m);
+        (void)snprintf(buf, len, "%s", m);
+        break;
+    case 6:
+        human(s->largest, l, sizeof l);
+        (void)snprintf(buf, len, "%s", l);
+        break;
+    default:
+        if (a->sub == 3)
+            (void)snprintf(buf, len, "%08X", (unsigned int)s->tcb);
+        else if (s->blocks == 0)
+            (void)snprintf(buf, len, "-");
+        else
+            (void)snprintf(buf, len, "%08X-%08X", (unsigned int)s->lo,
+                           (unsigned int)s->hi);
+        break;
+    }
 }
 
-static void collect(struct app *a)
-{
+static void job_cell(void *ctx, int row, int col, char *buf, size_t len) {
+    const struct app *a = ctx;
+    const struct zjob *j = &a->sys.job[row];
+
+    switch (col) {
+    case 0:
+        (void)snprintf(buf, len, "%u", j->asid);
+        break;
+    case 1:
+        (void)snprintf(buf, len, "%s", j->name);
+        break;
+    default:
+        (void)snprintf(buf, len, "%08X", (unsigned int)j->ascb);
+        break;
+    }
+}
+
+static void sys_read(struct app *a) {
+    struct zsys z;
+    struct utsname u;
+
+    (void)memcpy(&z, &a->sys, sizeof z);
+    if (!zsys_read(&z)) {
+        (void)snprintf(a->sys_err, sizeof a->sys_err,
+                       "CVT/ASVT are only available on z/OS");
+        a->have_sys = false;
+        return;
+    }
+    if (uname(&u) == 0) {
+        (void)snprintf(z.os, sizeof z.os, "%s %s", u.sysname, u.release);
+        (void)snprintf(z.machine, sizeof z.machine, "%s", u.machine);
+    }
+    (void)snprintf(z.host, sizeof z.host, "%s", a->host);
+    a->sys = z;
+    a->have_sys = true;
+    a->sys_err[0] = '\0';
+}
+
+static void collect(struct app *a) {
     struct timespec t0, t1;
-    int first = a->all ? 0 : a->sel;
-    int last = a->all ? 3 : a->sel;
+    int i;
 
     (void)clock_gettime(CLOCK_MONOTONIC, &t0);
-    for (int i = first; i <= last; i++) {
+    for (i = 0; i < 4; i++) {
         struct vsm_info v;
+
         if (collect_area(&v, i + 1, false)) {
             a->info[i] = v;
             a->have[i] = true;
             a->err[i][0] = '\0';
         } else {
             (void)snprintf(a->err[i], sizeof a->err[i], "%s", v.err);
-            if (!a->have[i])
-                a->info[i].area = (unsigned)(i + 1);
         }
     }
+    sys_read(a);
     (void)clock_gettime(CLOCK_MONOTONIC, &t1);
     a->collect_ms = (int)((t1.tv_sec - t0.tv_sec) * 1000 +
                           (t1.tv_nsec - t0.tv_nsec) / 1000000);
 }
 
-static void draw_tabs(struct tui *t, const struct app *a)
-{
-    static const char *const tabs[4] = { "1 CSA", "2 SQA", "3 LSQA", "4 PVT" };
+static void draw_header(struct tui *t, const struct app *a) {
+    char now[16];
+    time_t clock_now = time(NULL);
+    struct tm tm;
 
-    tui_fill(t, 0, 1, t->w, 1, ' ', TUI_PLAIN);
-    for (int i = 0; i < 4; i++) {
-        tui_style st = (!a->all && a->sel == i) ? TUI_TITLE : TUI_LABEL;
-        tui_printf(t, 1 + i * 9, 1, 8, st, " %s ", tabs[i]);
-    }
-    tui_printf(t, 38, 1, 7, a->all ? TUI_TITLE : TUI_LABEL, " a ALL ");
+    (void)localtime_r(&clock_now, &tm);
+    (void)strftime(now, sizeof now, "%H:%M:%S", &tm);
+    tui_fill(t, 0, 0, t->w, 1, ' ', TUI_TITLE);
+    tui_printf(t, 1, 0, t->w - 30, TUI_TITLE, " ztop %s  %s  %s  collect %dms ",
+               ZTOP_VERSION, a->host, now, a->collect_ms);
     if (a->paused)
-        tui_printf(t, t->w - 8, 1, 7, TUI_WARN, " PAUSED");
+        tui_put(t, t->w - 9, 0, " PAUSED ", 8, TUI_WARN);
 }
 
-static void draw_bar(struct tui *t, int x, int y, int p)
-{
-    char b[13];
-    int fill = p < 0 ? 0 : p / 10;
+static void draw_tabs(struct tui *t, const struct app *a) {
+    static const char *const labels[3] = {"1 STORAGE", "2 SYSTEM", "3 JOBS"};
+    int x = tui_tabs_draw(t, 0, 1, labels, 3, a->tab);
 
-    if (fill > 10)
-        fill = 10;
-    b[0] = '[';
-    for (int i = 0; i < 10; i++)
-        b[1 + i] = i < fill ? '#' : '-';
-    b[11] = ']';
-    b[12] = '\0';
-    tui_put(t, x, y, b, 12,
-            p < 0 ? TUI_STYLE(7, 0, TUI_DIM)
-                  : p < 70 ? TUI_GOOD : p < 85 ? TUI_WARN : TUI_BAD);
+    tui_printf(t, x + 1, 1, t->w - x - 2, TUI_LABEL, "refresh %ds  +/-",
+               a->interval);
 }
 
-static void draw_all(struct tui *t, const struct app *a)
-{
-    static const int xnum = 8, xused = 15, xfree = 26, xmap = 37;
-    static const int xtot = 48, xpct = 59, xbar = 66;
-
-    tui_printf(t, 1, 3, 6, TUI_LABEL, "AREA");
-    tui_printf(t, xnum, 3, 6, TUI_LABEL, "BLOCKS");
-    tui_printf(t, xused, 3, 9, TUI_LABEL, "USED");
-    tui_printf(t, xfree, 3, 9, TUI_LABEL, "FREE");
-    tui_printf(t, xmap, 3, 9, TUI_LABEL, "MAPPED");
-    tui_printf(t, xtot, 3, 9, TUI_LABEL, "TOTAL");
-    tui_printf(t, xpct, 3, 5, TUI_LABEL, "USE");
-
-    for (int i = 0; i < 4; i++) {
-        int y = 4 + i;
-        const struct vsm_info *v = &a->info[i];
-        char used[16], freed[16], mapped[16], total[16], pc[8];
-        int p;
-
-        if (!a->have[i]) {
-            tui_printf(t, 1, y, 0, TUI_BAD, "%-4s  %s", area_upper[i],
-                       a->err[i][0] ? a->err[i] : "collecting...");
-            continue;
-        }
-        p = pct(v);
-        human(v->used, used, sizeof used);
-        human(v->free, freed, sizeof freed);
-        human(v->foot, mapped, sizeof mapped);
-        if (v->area == VSM_CSA && v->unalloc_valid) {
-            human(v->foot + v->unalloc, total, sizeof total);
-            (void)snprintf(pc, sizeof pc, "%d%%", p);
-        } else {
-            (void)snprintf(total, sizeof total, "-");
-            (void)snprintf(pc, sizeof pc, "-");
-        }
-        tui_printf(t, 1, y, 4, TUI_PLAIN, "%s", area_upper[i]);
-        tui_printf(t, xnum, y, 6, TUI_PLAIN, "%6u", v->blocks);
-        tui_printf(t, xused, y, 9, TUI_PLAIN, "%9s", used);
-        tui_printf(t, xfree, y, 9, TUI_PLAIN, "%9s", freed);
-        tui_printf(t, xmap, y, 9, TUI_PLAIN, "%9s", mapped);
-        tui_printf(t, xtot, y, 9, TUI_PLAIN, "%9s", total);
-        tui_printf(t, xpct, y, 5,
-                   p < 0 ? TUI_PLAIN : p < 70 ? TUI_GOOD :
-                   p < 85 ? TUI_WARN : TUI_BAD, "%5s", pc);
-        draw_bar(t, xbar, y, p);
-    }
-}
-
-static void draw_detail(struct tui *t, struct app *a)
-{
-    const struct vsm_info *v = &a->info[a->sel];
-    bool pvt = a->sel == 3;
-    int rows = visible_rows(t);
+static void draw_storage(struct tui *t, struct app *a) {
+    const struct vsm_info *v = &a->info[a->sub];
+    tui_rect r = {0, 5, t->w, t->h - 7};
+    char used[16], freed[16], mapped[16], total[16], pcbuf[8];
     int p = pct(v);
 
-    if (!a->have[a->sel]) {
-        tui_printf(t, 1, 3, 0, TUI_BAD, "%s: %s", area_upper[a->sel],
-                   a->err[a->sel][0] ? a->err[a->sel] : "no data");
+    a->storage.cols = a->sub == 3 ? pvt_cols : storage_cols;
+    tui_printf(t, 1, 3, 6, a->sub == 0 ? TUI_TITLE : TUI_LABEL, " CSA ");
+    tui_printf(t, 7, 3, 6, a->sub == 1 ? TUI_TITLE : TUI_LABEL, " SQA ");
+    tui_printf(t, 13, 3, 6, a->sub == 2 ? TUI_TITLE : TUI_LABEL, " LSQA ");
+    tui_printf(t, 20, 3, 6, a->sub == 3 ? TUI_TITLE : TUI_LABEL, " PVT ");
+
+    if (!a->have[a->sub]) {
+        tui_printf(t, 1, 6, t->w - 2, TUI_BAD, "%s: %s", area_upper[a->sub],
+                   a->err[a->sub][0] ? a->err[a->sub] : "no data");
         return;
     }
-
-    char used[16], freed[16], mapped[16], total[16];
     human(v->used, used, sizeof used);
     human(v->free, freed, sizeof freed);
     human(v->foot, mapped, sizeof mapped);
-    if (v->area == VSM_CSA && v->unalloc_valid)
+    if (v->area == VSM_CSA && v->unalloc_valid) {
         human(v->foot + v->unalloc, total, sizeof total);
-    else
-        (void)snprintf(total, sizeof total, "-");
-
-    tui_printf(t, 1, 3, 0, TUI_PLAIN,
-               "%s  used %s  free %s  mapped %s  total %s  %d%%",
-               area_upper[a->sel], used, freed, mapped, total, p);
-
-    if (pvt) {
-        tui_printf(t, 1, 4, 3, TUI_LABEL, "SP");
-        tui_printf(t, 5, 4, 3, TUI_LABEL, "KY");
-        tui_printf(t, 9, 4, 8, TUI_LABEL, "TCB");
-        tui_printf(t, 18, 4, 5, TUI_LABEL, "BLKS");
-        tui_printf(t, 25, 4, 9, TUI_LABEL, "USED");
-        tui_printf(t, 35, 4, 9, TUI_LABEL, "FREE");
-        tui_printf(t, 45, 4, 9, TUI_LABEL, "MAPPED");
-        tui_printf(t, 55, 4, 9, TUI_LABEL, "LARGEST");
-        tui_printf(t, 65, 4, 9, TUI_LABEL, "ADDR");
+        (void)snprintf(pcbuf, sizeof pcbuf, "%d%%", p);
     } else {
-        tui_printf(t, 1, 4, 3, TUI_LABEL, "SP");
-        tui_printf(t, 5, 4, 3, TUI_LABEL, "KY");
-        tui_printf(t, 9, 4, 6, TUI_LABEL, "BLKS");
-        tui_printf(t, 16, 4, 9, TUI_LABEL, "USED");
-        tui_printf(t, 26, 4, 9, TUI_LABEL, "FREE");
-        tui_printf(t, 36, 4, 9, TUI_LABEL, "MAPPED");
-        tui_printf(t, 46, 4, 9, TUI_LABEL, "LARGEST");
-        tui_printf(t, 56, 4, 17, TUI_LABEL, "ADDRESS");
+        (void)snprintf(total, sizeof total, "-");
+        (void)snprintf(pcbuf, sizeof pcbuf, "-");
     }
+    tui_printf(t, 1, 4, t->w - 2, TUI_PLAIN,
+               "used %s  free %s  mapped %s  total %s  use %s  blocks %u", used,
+               freed, mapped, total, pcbuf, v->blocks);
+    tui_table_draw(t, r, &a->storage, v->nsub, storage_cell, NULL, a);
 
-    if (a->scroll > v->nsub - rows)
-        a->scroll = v->nsub - rows;
-    if (a->scroll < 0)
-        a->scroll = 0;
-
-    for (int r = 0; r < rows && a->scroll + r < v->nsub; r++) {
-        const struct vsm_subpool *s = &v->sub[a->scroll + r];
-        int y = 5 + r;
-        char u[16], f[16], m[16], l[16], addr[32];
-
-        human(s->used, u, sizeof u);
-        human(s->free, f, sizeof f);
-        human(s->foot, m, sizeof m);
-        human(s->largest, l, sizeof l);
-        if (s->blocks == 0)
-            (void)snprintf(addr, sizeof addr, "-");
-        else if (pvt)
-            (void)snprintf(addr, sizeof addr, "%08X", (unsigned)s->lo);
-        else
-            (void)snprintf(addr, sizeof addr, "%08X-%08X",
-                           (unsigned)s->lo, (unsigned)s->hi);
-
-        tui_printf(t, 1, y, 3, TUI_PLAIN, "%3u", s->id);
-        tui_printf(t, 5, y, 3, TUI_PLAIN, "%3u", s->key);
-        if (pvt) {
-            tui_printf(t, 9, y, 8, TUI_LABEL, "%08X", (unsigned)s->tcb);
-            tui_printf(t, 18, y, 5, TUI_PLAIN, "%5u", s->blocks);
-            tui_printf(t, 25, y, 9, TUI_PLAIN, "%9s", u);
-            tui_printf(t, 35, y, 9, TUI_PLAIN, "%9s", f);
-            tui_printf(t, 45, y, 9, TUI_PLAIN, "%9s", m);
-            tui_printf(t, 55, y, 9, TUI_PLAIN, "%9s", l);
-            tui_printf(t, 65, y, 8, TUI_LABEL, "%s", addr);
-        } else {
-            tui_printf(t, 9, y, 6, TUI_PLAIN, "%6u", s->blocks);
-            tui_printf(t, 16, y, 9, TUI_PLAIN, "%9s", u);
-            tui_printf(t, 26, y, 9, TUI_PLAIN, "%9s", f);
-            tui_printf(t, 36, y, 9, TUI_PLAIN, "%9s", m);
-            tui_printf(t, 46, y, 9, TUI_PLAIN, "%9s", l);
-            tui_printf(t, 56, y, 17, TUI_LABEL, "%s", addr);
-        }
-    }
-
-    /* The line above the keys: first an error, then regions. */
-    int y = t->h - 3;
-    if (a->err[a->sel][0] != '\0')
-        tui_printf(t, 1, y, t->w - 2, TUI_BAD, "! %s", a->err[a->sel]);
-    else if (v->unalloc_valid) {
-        if (v->nregion > 0) {
-            tui_printf(t, 1, y, t->w - 2, TUI_LABEL,
-                       "regions: %08X+%08X%s", (unsigned)v->region[0].addr,
-                       (unsigned)v->region[0].len,
-                       v->nregion > 1 ? " ..." : "");
-        } else {
-            tui_printf(t, 1, y, t->w - 2, TUI_PLAIN,
-                       "unallocated %llu bytes, %u blocks, largest %llu",
-                       (unsigned long long)v->unalloc, v->unalloc_blocks,
-                       (unsigned long long)v->largest_unalloc);
-        }
-    }
+    if (a->err[a->sub][0] != '\0')
+        tui_printf(t, 1, t->h - 2, t->w - 2, TUI_BAD, "! %s", a->err[a->sub]);
+    else if (v->unalloc_valid)
+        tui_printf(t, 1, t->h - 2, t->w - 2, TUI_LABEL,
+                   "unallocated %llu in %u blocks, largest %llu",
+                   (unsigned long long)v->unalloc, v->unalloc_blocks,
+                   (unsigned long long)v->largest_unalloc);
 }
 
-static void draw_help(struct tui *t)
-{
+static void draw_system(struct tui *t, const struct app *a) {
+    const struct zsys *z = &a->sys;
+
+    if (!a->have_sys) {
+        tui_printf(t, 1, 4, t->w - 2, TUI_BAD, "%s", a->sys_err);
+        return;
+    }
+    tui_printf(t, 1, 4, t->w - 2, TUI_LABEL, "system     %s", z->sysname);
+    tui_printf(t, 1, 5, t->w - 2, TUI_PLAIN, "host       %s", z->host);
+    tui_printf(t, 1, 6, t->w - 2, TUI_PLAIN, "os         %s", z->os);
+    tui_printf(t, 1, 7, t->w - 2, TUI_PLAIN, "machine    %s", z->machine);
+    tui_printf(t, 1, 8, t->w - 2, TUI_PLAIN, "spaces     %d used, %u slots",
+               z->njobs, z->slots);
+    tui_printf(
+        t, 1, 10, t->w - 2, TUI_LABEL,
+        "storage    CSA %llu unallocated, PVT %llu",
+        (unsigned long long)(a->info[0].unalloc_valid ? a->info[0].unalloc : 0),
+        (unsigned long long)(a->info[3].unalloc_valid ? a->info[3].unalloc
+                                                      : 0));
+}
+
+static void draw_jobs(struct tui *t, struct app *a) {
+    tui_rect r = {0, 3, t->w, t->h - 5};
+
+    if (!a->have_sys) {
+        tui_printf(t, 1, 4, t->w - 2, TUI_BAD, "%s", a->sys_err);
+        return;
+    }
+    tui_table_draw(t, r, &a->jobs, a->sys.njobs, job_cell, NULL, a);
+    tui_printf(t, 1, t->h - 2, t->w - 2, TUI_LABEL,
+               "%d address spaces, %u slots", a->sys.njobs, a->sys.slots);
+}
+
+static void draw_help(struct tui *t) {
     int w = t->w < 56 ? t->w - 2 : 54;
-    int h = 15;
+    int h = 16;
     int x = (t->w - w) / 2;
     int y = (t->h - h) / 2;
 
@@ -482,63 +502,49 @@ static void draw_help(struct tui *t)
     tui_box(t, x, y, w, h, TUI_LABEL);
     tui_printf(t, x + 2, y + 1, w - 4, TUI_TITLE, "ztop keys");
     tui_printf(t, x + 2, y + 3, w - 4, TUI_PLAIN, "q      quit");
-    tui_printf(t, x + 2, y + 4, w - 4, TUI_PLAIN, "1-4    csa, sqa, lsqa, pvt");
-    tui_printf(t, x + 2, y + 5, w - 4, TUI_PLAIN, "a      all areas");
-    tui_printf(t, x + 2, y + 6, w - 4, TUI_PLAIN, "p      pause refresh");
-    tui_printf(t, x + 2, y + 7, w - 4, TUI_PLAIN, "r      refresh now");
-    tui_printf(t, x + 2, y + 8, w - 4, TUI_PLAIN, "+ -    interval up / down");
-    tui_printf(t, x + 2, y + 9, w - 4, TUI_PLAIN, "j k    scroll subpools");
-    tui_printf(t, x + 2, y + 10, w - 4, TUI_PLAIN, "up dn  same");
-    tui_printf(t, x + 2, y + 11, w - 4, TUI_PLAIN, "g G    first / last");
-    tui_printf(t, x + 2, y + 12, w - 4, TUI_PLAIN, "?      close help");
+    tui_printf(t, x + 2, y + 4, w - 4, TUI_PLAIN, "TAB    next view");
+    tui_printf(t, x + 2, y + 5, w - 4, TUI_PLAIN,
+               "1-3    storage, system, jobs");
+    tui_printf(t, x + 2, y + 6, w - 4, TUI_PLAIN, "1-4    CSA, SQA, LSQA, PVT");
+    tui_printf(t, x + 2, y + 7, w - 4, TUI_PLAIN, "p      pause refresh");
+    tui_printf(t, x + 2, y + 8, w - 4, TUI_PLAIN, "r      refresh now");
+    tui_printf(t, x + 2, y + 9, w - 4, TUI_PLAIN, "+ -    interval up / down");
+    tui_printf(t, x + 2, y + 10, w - 4, TUI_PLAIN, "j k    move the selection");
+    tui_printf(t, x + 2, y + 11, w - 4, TUI_PLAIN, "up dn  same");
+    tui_printf(t, x + 2, y + 12, w - 4, TUI_PLAIN, "g G    first / last");
+    tui_printf(t, x + 2, y + 13, w - 4, TUI_PLAIN, "?      close help");
+    tui_printf(t, x + 2, y + 14, w - 4, TUI_PLAIN, "1-4    inside storage");
 }
 
-static void draw(struct tui *t, struct app *a)
-{
-    char now[16];
-    time_t clock_now = time(NULL);
-    struct tm tm;
+static void view(void *model, struct tui *t) {
+    struct app *a = model;
 
     tui_clear(t);
-    (void)localtime_r(&clock_now, &tm);
-    (void)strftime(now, sizeof now, "%H:%M:%S", &tm);
-
-    tui_fill(t, 0, 0, t->w, 1, ' ', TUI_TITLE);
-    tui_printf(t, 1, 0, t->w - 12, TUI_TITLE,
-               " ztop %s  %s  %s  refresh %ds  collect %dms ",
-               ZTOP_VERSION, a->host, now, a->interval, a->collect_ms);
+    draw_header(t, a);
     draw_tabs(t, a);
     tui_fill(t, 0, 2, t->w, 1, '-', TUI_STYLE(7, 0, TUI_DIM));
 
     if (t->w < 70 || t->h < 14) {
         tui_printf(t, 1, 3, 0, TUI_BAD, "terminal too small: need 70x14");
-    } else if (a->all) {
-        draw_all(t, a);
-        tui_printf(t, 1, 9, 0, TUI_PLAIN,
-                   "unallocated: CSA %llu  PVT %llu",
-                   (unsigned long long)(a->info[0].unalloc_valid
-                                            ? a->info[0].unalloc : 0),
-                   (unsigned long long)(a->info[3].unalloc_valid
-                                            ? a->info[3].unalloc : 0));
+    } else if (a->tab == 0) {
+        draw_storage(t, a);
+    } else if (a->tab == 1) {
+        draw_system(t, a);
     } else {
-        draw_detail(t, a);
+        draw_jobs(t, a);
     }
-
     if (a->help)
         draw_help(t);
-
-    tui_fill(t, 0, t->h - 1, t->w, 1, ' ', TUI_TITLE);
-    tui_printf(t, 1, t->h - 1, t->w - 2, TUI_TITLE,
-               "q quit  1-4 area  a all  p pause  r refresh  +/- %ds  ? help",
-               a->interval);
+    tui_statusbar(t, "q quit  TAB view  j/k move  r refresh  p pause  ? help",
+                  a->paused ? "PAUSED" : "");
 }
 
-static bool parse_areas(const char *s, unsigned *mask)
-{
-    unsigned m = 0;
+static bool parse_areas(const char *s, unsigned int *mask) {
+    unsigned int m = 0;
 
     while (*s != '\0') {
         size_t n = strcspn(s, ",");
+
         if (n == 3 && strncmp(s, "csa", 3) == 0)
             m |= 1u << 0;
         else if (n == 3 && strncmp(s, "sqa", 3) == 0)
@@ -559,154 +565,196 @@ static bool parse_areas(const char *s, unsigned *mask)
     return m != 0;
 }
 
-static void usage(FILE *f)
-{
-    (void)fprintf(f,
-        "usage: ztop [-a csa|sqa|lsqa|pvt|all] [-x] [-d [seconds]] [-h]\n"
-        "  -a  area to report (default csa); comma-separate areas or use all\n"
+static void usage(FILE *f) {
+    (void)fprintf(
+        f,
+        "usage: ztop [-a csa|sqa|lsqa|pvt|all] [-s] [-j] [-x] [-d [seconds]]\n"
+        "  -a  storage areas to report (default csa); comma-separate or all\n"
+        "  -s  system name, host, release and address-space count\n"
+        "  -j  one line per address space\n"
         "  -x  dump the VSMLIST work and data areas (one-shot only)\n"
-        "  -d  interactive full-screen view, refreshed every 2 seconds\n"
+        "  -d  interactive view, refreshed every 2 seconds by default\n"
         "  -h  this text\n");
 }
 
-static void run_oneshot(unsigned mask, bool dump)
-{
-    int rc = 0;
+static bool update(struct tui_app *app, const struct tui_msg *m) {
+    struct app *a = app->model;
+    int rows, height;
 
-    for (int i = 0; i < 4; i++) {
-        if ((mask & (1u << i)) == 0)
-            continue;
-        struct vsm_info v;
-        if (!collect_area(&v, i + 1, dump)) {
-            (void)fprintf(stderr, "ztop: %s: %s\n", area_name[i], v.err);
-            rc = 1;
-            continue;
-        }
-        if (i != 0)
-            (void)printf("\n");
-        print_area(&v);
+    if (a->help) {
+        if (m->type == TUI_MSG_KEY && (m->key == '?' || m->key == TUI_KEY_ESC ||
+                                       m->key == 'q' || m->key == 0x03))
+            a->help = false;
+        return true;
     }
-    exit(rc);
+    if (m->type == TUI_MSG_TICK) {
+        if (!a->paused)
+            collect(a);
+        return true;
+    }
+    if (m->type == TUI_MSG_RESIZE)
+        return true;
+    if (m->type != TUI_MSG_KEY)
+        return false;
+
+    if (m->key == 'q' || m->key == TUI_KEY_ESC || m->key == 0x03) {
+        app->quit = true;
+        return false;
+    }
+    if (m->key == '?') {
+        a->help = true;
+        return true;
+    }
+    if (m->key == 'p') {
+        a->paused = !a->paused;
+        return true;
+    }
+    if (m->key == 'r') {
+        collect(a);
+        return true;
+    }
+    if (m->key == '+' || m->key == '=') {
+        if (a->interval < 60)
+            a->interval++;
+        a->tapp->tick_ms = a->interval * 1000;
+        return true;
+    }
+    if (m->key == '-' && a->interval > 1) {
+        a->interval--;
+        a->tapp->tick_ms = a->interval * 1000;
+        return true;
+    }
+    if (m->key == TUI_KEY_TAB) {
+        a->tab = (a->tab + 1) % 3;
+        return true;
+    }
+    if (m->key == TUI_KEY_BACKTAB) {
+        a->tab = (a->tab + 2) % 3;
+        return true;
+    }
+    if (a->tab == 0 && m->key >= '1' && m->key <= '4') {
+        a->sub = m->key - '1';
+        return true;
+    }
+
+    rows = a->tab == 0 ? a->info[a->sub].nsub : a->sys.njobs;
+    height = a->tab == 0 ? m->h - 8 : m->h - 6;
+    if (height < 1)
+        height = 1;
+    if (a->tab == 0)
+        return tui_viewport_key(&a->storage.vp, m->key, rows, height);
+    if (a->tab == 2)
+        return tui_viewport_key(&a->jobs.vp, m->key, rows, height);
+    return false;
 }
 
-static void run_tui(unsigned mask, int interval)
-{
+static void sys_fill(struct zsys *z, const char *host) {
+    struct utsname u;
+
+    if (uname(&u) == 0) {
+        (void)snprintf(z->os, sizeof z->os, "%s %s", u.sysname, u.release);
+        (void)snprintf(z->machine, sizeof z->machine, "%s", u.machine);
+    }
+    (void)snprintf(z->host, sizeof z->host, "%s", host);
+}
+
+static void run_tui(int interval) {
     static struct app a;
     struct tui t;
+    struct tui_app ta;
 
     memset(&a, 0, sizeof a);
-    a.interval = interval;
-    a.all = (mask & 0xFu) == 0xFu;
-    for (int i = 0; i < 4; i++) {
-        a.info[i].area = (unsigned)(i + 1);
-        if (!a.all && (mask & (1u << i)) != 0 && a.sel == 0)
-            a.sel = i;
-    }
     if (gethostname(a.host, sizeof a.host - 1) != 0)
         (void)snprintf(a.host, sizeof a.host, "?");
-    a.host[sizeof a.host - 1] = '\0';
+    a.interval = interval;
+    a.storage.cols = storage_cols;
+    a.storage.ncols = 8;
+    a.jobs.cols = job_cols;
+    a.jobs.ncols = 3;
 
     if (!tui_open(&t)) {
         (void)fprintf(stderr, "ztop: -d needs a terminal\n");
         exit(1);
     }
     collect(&a);
-    for (;;) {
-        draw(&t, &a);
-        tui_flush(&t);
-        int k = tui_key(&t, a.paused ? -1 : a.interval * 1000);
 
-        if (k == TUI_KEY_NONE) {
-            collect(&a);
-            continue;
-        }
-        if (k == TUI_KEY_RESIZE) {
-            (void)tui_resize(&t);
-            continue;
-        }
-        if (a.help) {
-            if (k == '?' || k == TUI_KEY_ESC)
-                a.help = false;
-            else if (k == 'q')
-                break;
-            continue;
-        }
-        if (k == 'q' || k == 0x03 || k == TUI_KEY_ESC)
-            break;
-        if (k >= '1' && k <= '4') {
-            a.sel = k - '1';
-            a.all = false;
-            a.scroll = 0;
-            collect(&a);
-            continue;
-        }
-        if (k == 'a') {
-            a.all = !a.all;
-            collect(&a);
-            continue;
-        }
-        if (k == 'p') {
-            a.paused = !a.paused;
-            continue;
-        }
-        if (k == 'r') {
-            collect(&a);
-            continue;
-        }
-        if (k == '+' || k == '=') {
-            if (a.interval < 60)
-                a.interval++;
-            continue;
-        }
-        if (k == '-') {
-            if (a.interval > 1)
-                a.interval--;
-            continue;
-        }
-        if (k == '?') {
-            a.help = true;
-            continue;
-        }
-        int rows = visible_rows(&t);
-        int max = a.info[a.sel].nsub - rows;
-        if (max < 0)
-            max = 0;
-        if (k == 'j' || k == TUI_KEY_DOWN) {
-            if (a.scroll < max)
-                a.scroll++;
-        } else if (k == 'k' || k == TUI_KEY_UP) {
-            if (a.scroll > 0)
-                a.scroll--;
-        } else if (k == TUI_KEY_PGDN) {
-            a.scroll += rows;
-            if (a.scroll > max)
-                a.scroll = max;
-        } else if (k == TUI_KEY_PGUP) {
-            a.scroll -= rows;
-            if (a.scroll < 0)
-                a.scroll = 0;
-        } else if (k == 'g' || k == TUI_KEY_HOME) {
-            a.scroll = 0;
-        } else if (k == 'G' || k == TUI_KEY_END) {
-            a.scroll = max;
-        }
-    }
+    memset(&ta, 0, sizeof ta);
+    ta.model = &a;
+    ta.update = update;
+    ta.view = view;
+    ta.tick_ms = interval * 1000;
+    a.tapp = &ta;
+    tui_run(&t, &ta);
     tui_close(&t);
 }
 
-int main(int argc, char **argv)
-{
+static void run_oneshot(unsigned mask, bool want_sys, bool want_jobs,
+                        bool dump) {
+    char host[65];
+    bool printed = false;
+    int rc = 0;
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        struct vsm_info v;
+
+        if ((mask & (1u << i)) == 0)
+            continue;
+        if (!collect_area(&v, i + 1, dump)) {
+            (void)fprintf(stderr, "ztop: %s: %s\n", area_name[i], v.err);
+            rc = 1;
+            continue;
+        }
+        if (printed)
+            (void)printf("\n");
+        print_area(&v);
+        printed = true;
+    }
+    if (want_sys || want_jobs) {
+        struct zsys z;
+
+        if (gethostname(host, sizeof host - 1) != 0)
+            (void)snprintf(host, sizeof host, "?");
+        host[sizeof host - 1] = '\0';
+        if (!zsys_read(&z)) {
+            (void)fprintf(stderr,
+                          "ztop: system and jobs are only available on z/OS\n");
+            rc = 1;
+        } else {
+            sys_fill(&z, host);
+            if (printed)
+                (void)printf("\n");
+            if (want_sys)
+                print_system(&z);
+            if (want_jobs) {
+                if (want_sys)
+                    (void)printf("\n");
+                print_jobs(&z);
+            }
+        }
+    }
+    exit(rc);
+}
+
+int main(int argc, char **argv) {
     unsigned mask = 0;
     bool dump = false;
     bool interactive = false;
+    bool want_sys = false;
+    bool want_jobs = false;
     int interval = 0;
+    int i;
 
-    for (int i = 1; i < argc; i++) {
+    for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-h") == 0) {
             usage(stdout);
             return 0;
         } else if (strcmp(argv[i], "-x") == 0) {
             dump = true;
+        } else if (strcmp(argv[i], "-s") == 0) {
+            want_sys = true;
+        } else if (strcmp(argv[i], "-j") == 0) {
+            want_jobs = true;
         } else if (strcmp(argv[i], "-a") == 0) {
             if (i + 1 >= argc || !parse_areas(argv[++i], &mask)) {
                 usage(stderr);
@@ -726,8 +774,6 @@ int main(int argc, char **argv)
             return 2;
         }
     }
-    if (mask == 0)
-        mask = 1u;
 
     if (interactive) {
         if (dump)
@@ -736,9 +782,11 @@ int main(int argc, char **argv)
             interval = 2;
         if (interval > 60)
             interval = 60;
-        run_tui(mask, interval);
+        run_tui(interval);
     } else {
-        run_oneshot(mask, dump);
+        if (mask == 0 && !want_sys && !want_jobs)
+            mask = 1u;
+        run_oneshot(mask, want_sys, want_jobs, dump);
     }
     return 0;
 }
