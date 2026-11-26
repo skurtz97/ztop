@@ -63,7 +63,7 @@ static void human(uint64_t n, char *buf, size_t len) {
         (void)snprintf(buf, len, "%llu", (unsigned long long)n);
 }
 
-#if defined(__MVS__)
+#ifdef __MVS__
 static void hexdump(const char *tag, const unsigned char *p, unsigned int len,
                     unsigned int max) {
     unsigned int i, j;
@@ -273,7 +273,84 @@ struct app {
     struct tui_table jobs;
     struct tui_app *tapp;
     char host[65];
+    int sub_sort, sub_dir;
+    int job_sort, job_dir;
+    int sub_order[VSM_MAX_SUB];
+    int job_order[ZJOB_MAX];
+    bool popup;
 };
+
+enum { SS_SP, SS_KEY, SS_BLOCKS, SS_USED, SS_FREE, SS_LARGEST, SS_COUNT };
+enum { JS_ASID, JS_JOB, JS_ADDR, JS_COUNT };
+
+static const char *const sub_sort_names[SS_COUNT] = {
+    "sp", "key", "blocks", "used", "free", "largest",
+};
+static const char *const job_sort_names[JS_COUNT] = {"asid", "job", "ascb"};
+
+/* qsort has no context argument; these are set right before each call and
+ * the application is single-threaded. */
+static const struct vsm_info *sort_info;
+static const struct zsys *sort_sys;
+static int sort_key, sort_dir;
+
+static int cmp_u64(uint64_t a, uint64_t b) {
+    return (a > b) - (a < b);
+}
+static int cmp_u32(uint32_t a, uint32_t b) {
+    return (a > b) - (a < b);
+}
+
+static int cmp_sub(const void *pa, const void *pb) {
+    int ia = *(const int *)pa;
+    int ib = *(const int *)pb;
+    const struct vsm_subpool *a = &sort_info->sub[ia];
+    const struct vsm_subpool *b = &sort_info->sub[ib];
+    int r = 0;
+
+    switch (sort_key) {
+    case SS_SP:
+        r = cmp_u32(a->id, b->id);
+        break;
+    case SS_KEY:
+        r = cmp_u32(a->key, b->key);
+        break;
+    case SS_BLOCKS:
+        r = cmp_u32(a->blocks, b->blocks);
+        break;
+    case SS_USED:
+        r = cmp_u64(a->used, b->used);
+        break;
+    case SS_FREE:
+        r = cmp_u64(a->free, b->free);
+        break;
+    default:
+        r = cmp_u64(a->largest, b->largest);
+        break;
+    }
+    return r != 0 ? sort_dir * r : ia - ib;
+}
+
+static int cmp_job(const void *pa, const void *pb) {
+    int ia = *(const int *)pa;
+    int ib = *(const int *)pb;
+    const struct zjob *a = &sort_sys->job[ia];
+    const struct zjob *b = &sort_sys->job[ib];
+    int r = 0;
+
+    switch (sort_key) {
+    case JS_ASID:
+        r = cmp_u32(a->asid, b->asid);
+        break;
+    case JS_JOB:
+        r = strcmp(a->name, b->name);
+        break;
+    default:
+        r = cmp_u32(a->ascb, b->ascb);
+        break;
+    }
+    return r != 0 ? sort_dir * r : ia - ib;
+}
 
 static const struct tui_col storage_cols[] = {
     {"SP", 3, true},       {"KY", 3, true},        {"BLKS", 6, true},
@@ -295,7 +372,8 @@ static const struct tui_col job_cols[] = {
 
 static void storage_cell(void *ctx, int row, int col, char *buf, size_t len) {
     const struct app *a = ctx;
-    const struct vsm_subpool *s = &a->info[a->sub].sub[row];
+    int i = row < a->info[a->sub].nsub ? a->sub_order[row] : row;
+    const struct vsm_subpool *s = &a->info[a->sub].sub[i];
     char u[16], f[16], m[16], l[16];
 
     switch (col) {
@@ -338,7 +416,8 @@ static void storage_cell(void *ctx, int row, int col, char *buf, size_t len) {
 
 static void job_cell(void *ctx, int row, int col, char *buf, size_t len) {
     const struct app *a = ctx;
-    const struct zjob *j = &a->sys.job[row];
+    int i = row < a->sys.njobs ? a->job_order[row] : row;
+    const struct zjob *j = &a->sys.job[i];
 
     switch (col) {
     case 0:
@@ -418,13 +497,32 @@ static void draw_tabs(struct tui *t, const struct app *a) {
                a->interval);
 }
 
+static void order_storage(struct app *a) {
+    const struct vsm_info *v = &a->info[a->sub];
+
+    for (int i = 0; i < v->nsub; i++)
+        a->sub_order[i] = i;
+    sort_info = v;
+    sort_key = a->sub_sort;
+    sort_dir = a->sub_dir;
+    qsort(a->sub_order, (size_t)v->nsub, sizeof a->sub_order[0], cmp_sub);
+}
+
 static void draw_storage(struct tui *t, struct app *a) {
     const struct vsm_info *v = &a->info[a->sub];
     tui_rect r = {0, 5, t->w, t->h - 7};
     char used[16], freed[16], mapped[16], total[16], pcbuf[8];
+    char head[24];
+    struct tui_col cols[8];
+    static const int col_of[SS_COUNT] = {0, 1, 2, 3, 4, 6};
     int p = pct(v);
 
-    a->storage.cols = a->sub == 3 ? pvt_cols : storage_cols;
+    order_storage(a);
+    (void)memcpy(cols, a->sub == 3 ? pvt_cols : storage_cols, sizeof cols);
+    (void)snprintf(head, sizeof head, "%s %s", sub_sort_names[a->sub_sort],
+                   a->sub_dir < 0 ? "^" : "v");
+    cols[col_of[a->sub_sort]].title = head;
+    a->storage.cols = cols;
     tui_printf(t, 1, 3, 6, a->sub == 0 ? TUI_TITLE : TUI_LABEL, " CSA ");
     tui_printf(t, 7, 3, 6, a->sub == 1 ? TUI_TITLE : TUI_LABEL, " SQA ");
     tui_printf(t, 13, 3, 6, a->sub == 2 ? TUI_TITLE : TUI_LABEL, " LSQA ");
@@ -484,7 +582,23 @@ static void draw_system(struct tui *t, const struct app *a) {
 
 static void draw_jobs(struct tui *t, struct app *a) {
     tui_rect r = {0, 3, t->w, t->h - 5};
+    char head[24];
+    struct tui_col cols[3];
 
+    if (a->have_sys) {
+        for (int i = 0; i < a->sys.njobs; i++)
+            a->job_order[i] = i;
+        sort_sys = &a->sys;
+        sort_key = a->job_sort;
+        sort_dir = a->job_dir;
+        qsort(a->job_order, (size_t)a->sys.njobs, sizeof a->job_order[0],
+              cmp_job);
+        (void)memcpy(cols, job_cols, sizeof cols);
+        (void)snprintf(head, sizeof head, "%s %s", job_sort_names[a->job_sort],
+                       a->job_dir < 0 ? "^" : "v");
+        cols[a->job_sort].title = head;
+        a->jobs.cols = cols;
+    }
     if (!a->have_sys) {
         tui_printf(t, 1, 4, t->w - 2, TUI_BAD, "%s", a->sys_err);
         return;
@@ -492,6 +606,44 @@ static void draw_jobs(struct tui *t, struct app *a) {
     tui_table_draw(t, r, &a->jobs, a->sys.njobs, job_cell, NULL, a);
     tui_printf(t, 1, t->h - 2, t->w - 2, TUI_LABEL,
                "%d address spaces, %u slots", a->sys.njobs, a->sys.slots);
+}
+
+/** @brief Everything about the selected subpool, over the table. */
+static void draw_subpool(struct tui *t, const struct app *a) {
+    const struct vsm_info *v = &a->info[a->sub];
+    int i = v->nsub ? a->sub_order[a->storage.vp.sel] : 0;
+    const struct vsm_subpool *s = &v->sub[i];
+    int w = 46;
+    int h = 12;
+    int x = (t->w - w) / 2;
+    int y = (t->h - h) / 2;
+    char u[16], f[16], m[16], l[16];
+
+    if (x < 0)
+        x = 0;
+    if (y < 0)
+        y = 0;
+    human(s->used, u, sizeof u);
+    human(s->free, f, sizeof f);
+    human(s->foot, m, sizeof m);
+    human(s->largest, l, sizeof l);
+    tui_fill(t, x, y, w, h, ' ', TUI_PLAIN);
+    tui_box(t, x, y, w, h, TUI_LABEL);
+    tui_printf(t, x + 2, y + 1, w - 4, TUI_TITLE, "subpool %u", s->id);
+    tui_printf(t, x + 2, y + 3, w - 4, TUI_PLAIN, "key        %u", s->key);
+    tui_printf(t, x + 2, y + 4, w - 4, TUI_PLAIN, "blocks     %u", s->blocks);
+    tui_printf(t, x + 2, y + 5, w - 4, TUI_PLAIN, "used       %s", u);
+    tui_printf(t, x + 2, y + 6, w - 4, TUI_PLAIN, "free       %s", f);
+    tui_printf(t, x + 2, y + 7, w - 4, TUI_PLAIN, "mapped     %s", m);
+    tui_printf(t, x + 2, y + 8, w - 4, TUI_PLAIN, "largest    %s", l);
+    if (v->area == VSM_PVT)
+        tui_printf(t, x + 2, y + 9, w - 4, TUI_PLAIN, "tcb        %08X",
+                   (unsigned int)s->tcb);
+    else
+        tui_printf(t, x + 2, y + 9, w - 4, TUI_PLAIN, "address    %08X-%08X",
+                   (unsigned int)s->lo, (unsigned int)s->hi);
+    tui_printf(t, x + 2, y + h - 2, w - 4, TUI_STYLE(7, 0, TUI_DIM),
+               "any key closes");
 }
 
 static void draw_help(struct tui *t) {
@@ -521,6 +673,8 @@ static void draw_help(struct tui *t) {
                "g G / Home End    first / last");
     tui_printf(t, x + 2, y + 12, w - 4, TUI_PLAIN,
                "wheel, click      scroll, select a row");
+    tui_printf(t, x + 2, y + 13, w - 4, TUI_PLAIN,
+               "s / S             sort / reverse   Enter  details");
 
     tui_printf(t, x + 2, y + 14, w - 4, TUI_LABEL, "the screen");
     tui_printf(t, x + 2, y + 15, w - 4, TUI_PLAIN,
@@ -529,8 +683,33 @@ static void draw_help(struct tui *t) {
                "? close this help         q quit");
 }
 
+/** @brief The right half of the status line: what is under the cursor. */
+static void detail(struct app *a, char *buf, size_t len) {
+    if (a->paused) {
+        (void)snprintf(buf, len, "PAUSED");
+    } else if (a->tab == 0 && a->have[a->sub] && a->info[a->sub].nsub > 0) {
+        const struct vsm_subpool *sp = &a->info[a->sub].sub[a->storage.vp.sel];
+
+        if (a->sub == 3)
+            (void)snprintf(buf, len, "sp %u  tcb %08X", sp->id,
+                           (unsigned int)sp->tcb);
+        else if (sp->blocks == 0)
+            (void)snprintf(buf, len, "sp %u  empty", sp->id);
+        else
+            (void)snprintf(buf, len, "sp %u  %08X-%08X", sp->id,
+                           (unsigned int)sp->lo, (unsigned int)sp->hi);
+    } else if (a->tab == 2 && a->have_sys && a->sys.njobs > 0) {
+        const struct zjob *j = &a->sys.job[a->jobs.vp.sel];
+
+        (void)snprintf(buf, len, "asid %u  %s", j->asid, j->name);
+    } else {
+        buf[0] = '\0';
+    }
+}
+
 static void view(void *model, struct tui *t) {
     struct app *a = model;
+    char right[48];
 
     tui_clear(t);
     draw_header(t, a);
@@ -546,13 +725,16 @@ static void view(void *model, struct tui *t) {
     } else {
         draw_jobs(t, a);
     }
+    if (a->popup)
+        draw_subpool(t, a);
     if (a->help)
         draw_help(t);
+    detail(a, right, sizeof right);
     tui_statusbar(t,
-                  a->tab == 0   ? "TAB view  1-4 area  j/k move  wheel  ? help"
+                  a->tab == 0   ? "TAB view  1-4 area  j/k move  s sort  ? help"
                   : a->tab == 1 ? "TAB view  r refresh  ? help"
-                                : "TAB view  j/k move  PgUp/PgDn  ? help",
-                  a->paused ? "PAUSED" : "");
+                                : "TAB view  j/k move  s sort  ? help",
+                  right);
 }
 
 static bool parse_areas(const char *s, unsigned int *mask) {
@@ -662,6 +844,11 @@ static bool update(struct tui_app *app, const struct tui_msg *m) {
             a->help = false;
         return true;
     }
+    if (a->popup) {
+        if (m->type == TUI_MSG_KEY)
+            a->popup = false;
+        return true;
+    }
     if (m->type == TUI_MSG_TICK) {
         if (!a->paused)
             collect(a);
@@ -711,6 +898,24 @@ static bool update(struct tui_app *app, const struct tui_msg *m) {
     }
     if (a->tab == 0 && m->key >= '1' && m->key <= '4') {
         a->sub = m->key - '1';
+        a->storage.vp.sel = 0;
+        a->storage.vp.top = 0;
+        return true;
+    }
+    if ((m->key == 's' || m->key == 'S') && a->tab != 1) {
+        int *key = a->tab == 0 ? &a->sub_sort : &a->job_sort;
+        int *dir = a->tab == 0 ? &a->sub_dir : &a->job_dir;
+        int n = a->tab == 0 ? SS_COUNT : JS_COUNT;
+
+        if (m->key == 's')
+            *key = (*key + 1) % n;
+        else
+            *dir = -*dir;
+        return true;
+    }
+    if (a->tab == 0 && (m->key == '\r' || m->key == '\n') &&
+        a->info[a->sub].nsub > 0) {
+        a->popup = true;
         return true;
     }
 
@@ -744,6 +949,10 @@ static void run_tui(int interval) {
     if (gethostname(a.host, sizeof a.host - 1) != 0)
         (void)snprintf(a.host, sizeof a.host, "?");
     a.interval = interval;
+    a.sub_sort = SS_USED;
+    a.sub_dir = -1;
+    a.job_sort = JS_ASID;
+    a.job_dir = 1;
     a.storage.cols = storage_cols;
     a.storage.ncols = 8;
     a.jobs.cols = job_cols;
@@ -844,8 +1053,12 @@ int main(int argc, char **argv) {
             }
         } else if (strcmp(argv[i], "-d") == 0) {
             interactive = true;
-            if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9')
-                interval = atoi(argv[++i]);
+            if (i + 1 < argc && argv[i + 1][0] >= '0' &&
+                argv[i + 1][0] <= '9') {
+                long secs = strtol(argv[++i], NULL, 10);
+
+                interval = secs < 1 ? 1 : secs > 60 ? 60 : (int)secs;
+            }
         } else {
             usage(stderr);
             return 2;
