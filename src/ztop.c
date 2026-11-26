@@ -589,13 +589,13 @@ static void run_oneshot(unsigned mask, bool dump)
     exit(rc);
 }
 
-static void run_tui(unsigned mask)
+static void run_tui(unsigned mask, int interval)
 {
     static struct app a;
     struct tui t;
 
     memset(&a, 0, sizeof a);
-    a.interval = 2;
+    a.interval = interval;
     a.all = (mask & 0xFu) == 0xFu;
     for (int i = 0; i < 4; i++) {
         a.info[i].area = (unsigned)(i + 1);
@@ -736,7 +736,7 @@ int main(int argc, char **argv)
             interval = 2;
         if (interval > 60)
             interval = 60;
-        run_tui(mask);
+        run_tui(mask, interval);
     } else {
         run_oneshot(mask, dump);
     }
