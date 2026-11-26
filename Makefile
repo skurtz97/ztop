@@ -6,7 +6,6 @@
 # ztop - what VSM has allocated, by subpool.
 #
 #   make            build ./ztop
-#   make apf        build it and give the executable the APF bit
 #   make check      run it against each area
 #   make clean      remove what the targets above write
 #
@@ -20,44 +19,49 @@
 # parenthesised (make/tests on the ztop machine depend on that).
 
 CC      = ibm-clang
-AS      = as
-CFLAGS  = -std=c23 -O2 -m32 -Wall -Wextra -Wshadow -Wpedantic
-# AC(1) is half of what makes an executable APF-authorized, the other
-# half being the APF bit on the file (make apf).  Quoted: the z/OS shell
-# reads `(` in an unquoted word as a syntax error.
+CFLAGS  = -std=c23 -O2 -m32 -Wall -Wextra -Wshadow -Wpedantic \
+          -D_XOPEN_SOURCE=500 -D_POSIX_C_SOURCE=200112L
+# The parser and the TUI framework have no z/OS dependency; the test and
+# demo targets build them on the host so a Linux tree can check them.
+TESTCC  = ibm-clang
+TESTFLAGS = -std=c17 -g -O1 -Wall -Wextra -Wshadow -Wpedantic \
+            -D_XOPEN_SOURCE=500 -D_POSIX_C_SOURCE=200112L
+# AC(1) selects XPLINK.  Quoted: the z/OS shell reads `(` in an
+# unquoted word as a syntax error.
 LDFLAGS = -Wl,'-bAC(1)'
 
+# The .S suffix sends the stub through clang's preprocessor; -P drops
+# the line markers HLASM would read as statements, and -fno-integrated-as
+# hands the result to HLASM.  That path writes its own tagged temporary,
+# so the checked-out ASCII source needs no chtag first.
+ASFLAGS = -fno-integrated-as -Xpreprocessor -P
+SRC = src/ztop.c src/vsm.c src/tui.c
 OBJ = src/zvslist.o
+HDR = src/vsm.h src/tui.h
 
 all:
 	@(uname -s | grep OS/390 > /dev/null) || \
 	    { echo "ztop builds only on z/OS; this tree is a backup copy"; exit 1; }
 	$(MAKE) ztop
 
-ztop: src/ztop.c $(OBJ)
-	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ src/ztop.c $(OBJ)
+ztop: $(SRC) $(OBJ) $(HDR)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(SRC) $(OBJ)
 
-# The assembler reads HFS source through the file's coded character set
-# tag; a git checkout arrives tagged UTF-8 and HLASM then reads the file
-# as if it were EBCDIC ("SYNAD ... WRONG LEN RECRD").  Tag it as ASCII,
-# and keep every statement inside column 71: column 72 is the
-# continuation mark, and a long comment turns the next line into one.
-# An explicit rule, not .s.o: z/OS make is happy with those and spins on
-# a suffix rule for a file in a subdirectory.
-src/zvslist.o: src/zvslist.s
-	chtag -t -c ISO8859-1 src/zvslist.s
-	@awk 'length > 71 { print FILENAME ":" FNR ": past column 71"; bad = 1 } END { exit bad }' src/zvslist.s
-	$(AS) -o src/zvslist.o src/zvslist.s
-
-# A relink drops the APF bit, so run this after every build.
-apf: ztop
-	extattr +a ztop
-	ls -E ztop
+src/zvslist.o: src/zvslist.S
+	$(CC) $(CFLAGS) $(ASFLAGS) -c -o $@ src/zvslist.S
 
 check: ztop
 	./ztop
 	./ztop -a sqa
 	./ztop -a pvt
 
+# Portable checks: no VSMLIST, no terminal.
+test: tests/test_vsm.c src/vsm.c src/vsm.h
+	$(TESTCC) $(TESTFLAGS) -o tests/test_vsm tests/test_vsm.c src/vsm.c
+	./tests/test_vsm
+
+demo: tests/demo_tui.c src/tui.c src/tui.h
+	$(TESTCC) $(TESTFLAGS) -o tests/demo_tui tests/demo_tui.c src/tui.c
+
 clean:
-	rm -f ztop $(OBJ)
+	rm -f ztop $(OBJ) tests/test_vsm tests/demo_tui

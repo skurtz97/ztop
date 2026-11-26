@@ -1,4 +1,6 @@
-/ztop
-*.o
+ztop
+src/*.o
+tests/test_vsm
+tests/demo_tui
+CEEDUMP.*
 *.lst
-CL*.txt
