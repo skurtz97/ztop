@@ -496,6 +496,20 @@ static void collect(struct app *a) {
                           (t1.tv_nsec - t0.tv_nsec) / 1000000);
 }
 
+static const struct tui_hint view_bar[] = {
+    {"q", "quit"},
+    {"TAB", "view"},
+    {"r", "refresh"},
+    {"?", "help"},
+};
+
+static const struct tui_hint storage_bar[] = {
+    {"q", "quit"},
+    {"TAB", "view"},
+    {"s", "sort"},
+    {"Enter", "details"},
+};
+
 static void draw_header(struct tui *t, const struct app *a) {
     char now[16];
     char right[64];
@@ -732,7 +746,7 @@ static void draw_subpool(struct tui *t, const struct app *a) {
     int h = 12;
     int x = (t->w - w) / 2;
     int y = (t->h - h) / 2;
-    char u[16], f[16], m[16], l[16];
+    char u[16], f[16], m[16], l[16], b[32];
 
     if (x < 0)
         x = 0;
@@ -743,59 +757,60 @@ static void draw_subpool(struct tui *t, const struct app *a) {
     human(s->foot, m, sizeof m);
     human(s->largest, l, sizeof l);
     tui_fill(t, x, y, w, h, ' ', TUI_PLAIN);
-    tui_box(t, x, y, w, h, TUI_LABEL);
-    tui_printf(t, x + 2, y + 1, w - 4, TUI_TITLE, "subpool %u", s->id);
-    tui_printf(t, x + 2, y + 3, w - 4, TUI_PLAIN, "key        %u", s->key);
-    tui_printf(t, x + 2, y + 4, w - 4, TUI_PLAIN, "blocks     %u", s->blocks);
-    tui_printf(t, x + 2, y + 5, w - 4, TUI_PLAIN, "used       %s", u);
-    tui_printf(t, x + 2, y + 6, w - 4, TUI_PLAIN, "free       %s", f);
-    tui_printf(t, x + 2, y + 7, w - 4, TUI_PLAIN, "mapped     %s", m);
-    tui_printf(t, x + 2, y + 8, w - 4, TUI_PLAIN, "largest    %s", l);
-    if (v->area == VSM_PVT)
-        tui_printf(t, x + 2, y + 9, w - 4, TUI_PLAIN, "tcb        %08X",
-                   (unsigned int)s->tcb);
-    else
-        tui_printf(t, x + 2, y + 9, w - 4, TUI_PLAIN, "address    %08X-%08X",
-                   (unsigned int)s->lo, (unsigned int)s->hi);
-    tui_printf(t, x + 2, y + h - 2, w - 4, TUI_STYLE(7, 0, TUI_DIM),
-               "any key closes");
+    (void)snprintf(b, sizeof b, "subpool %u", s->id);
+    tui_box_frame(t, x, y, w, h, TUI_ACCENT, b, TUI_ACCENT);
+    (void)snprintf(b, sizeof b, "%u", s->key);
+    kv(t, x + 2, y + 2, w - 4, "key", b, TUI_PLAIN);
+    (void)snprintf(b, sizeof b, "%u", s->blocks);
+    kv(t, x + 2, y + 3, w - 4, "blocks", b, TUI_PLAIN);
+    kv(t, x + 2, y + 4, w - 4, "used", u, TUI_PLAIN);
+    kv(t, x + 2, y + 5, w - 4, "free", f, TUI_PLAIN);
+    kv(t, x + 2, y + 6, w - 4, "mapped", m, TUI_PLAIN);
+    kv(t, x + 2, y + 7, w - 4, "largest", l, TUI_PLAIN);
+    if (v->area == VSM_PVT) {
+        (void)snprintf(b, sizeof b, "%08X", (unsigned int)s->tcb);
+        kv(t, x + 2, y + 8, w - 4, "tcb", b, TUI_PLAIN);
+    } else {
+        (void)snprintf(b, sizeof b, "%08X-%08X", (unsigned int)s->lo,
+                       (unsigned int)s->hi);
+        kv(t, x + 2, y + 8, w - 4, "address", b, TUI_PLAIN);
+    }
+    tui_printf(t, x + 2, y + h - 2, w - 4, TUI_META, "any key closes");
 }
 
 static void draw_help(struct tui *t) {
+    static const struct tui_hint views[] = {
+        {"TAB", "next view"},
+        {"Shift-TAB", "previous view"},
+        {"1-4", "CSA SQA LSQA PVT"},
+        {"click", "a tab"},
+    };
+    static const struct tui_hint moving[] = {
+        {"j k", "one row"},  {"PgUp PgDn", "a page"}, {"g G", "first, last"},
+        {"wheel", "scroll"}, {"Enter", "details"},    {"s S", "sort, reverse"},
+    };
+    static const struct tui_hint screen[] = {
+        {"p", "pause"}, {"r", "refresh now"}, {"+ -", "interval 1..60 s"},
+        {"?", "help"},  {"q", "quit"},
+    };
     int w = t->w < 64 ? t->w - 2 : 62;
-    int h = 19;
+    int h = 15;
     int x = (t->w - w) / 2;
     int y = (t->h - h) / 2;
 
+    if (x < 0)
+        x = 0;
     if (y < 0)
         y = 0;
     tui_fill(t, x, y, w, h, ' ', TUI_PLAIN);
-    tui_box(t, x, y, w, h, TUI_LABEL);
-    tui_printf(t, x + 2, y + 1, w - 4, TUI_TITLE, "ztop keys");
-
-    tui_printf(t, x + 2, y + 3, w - 4, TUI_LABEL, "views");
-    tui_printf(t, x + 2, y + 4, w - 4, TUI_PLAIN,
-               "TAB / Shift-TAB   next / previous view");
-    tui_printf(t, x + 2, y + 5, w - 4, TUI_PLAIN,
-               "1 2 3 4           inside STORAGE: CSA SQA LSQA PVT");
-    tui_printf(t, x + 2, y + 6, w - 4, TUI_PLAIN,
-               "click a tab       same, with the mouse");
-
-    tui_printf(t, x + 2, y + 8, w - 4, TUI_LABEL, "moving");
-    tui_printf(t, x + 2, y + 9, w - 4, TUI_PLAIN, "j k / arrows      one row");
-    tui_printf(t, x + 2, y + 10, w - 4, TUI_PLAIN, "PgUp PgDn         a page");
-    tui_printf(t, x + 2, y + 11, w - 4, TUI_PLAIN,
-               "g G / Home End    first / last");
-    tui_printf(t, x + 2, y + 12, w - 4, TUI_PLAIN,
-               "wheel, click      scroll, select a row");
-    tui_printf(t, x + 2, y + 13, w - 4, TUI_PLAIN,
-               "s / S             sort / reverse   Enter  details");
-
-    tui_printf(t, x + 2, y + 14, w - 4, TUI_LABEL, "the screen");
-    tui_printf(t, x + 2, y + 15, w - 4, TUI_PLAIN,
-               "p pause   r refresh now   + - interval 1..60 s");
-    tui_printf(t, x + 2, y + 16, w - 4, TUI_PLAIN,
-               "? close this help         q quit");
+    tui_box_frame(t, x, y, w, h, TUI_ACCENT, "keys", TUI_ACCENT);
+    tui_printf(t, x + 2, y + 2, w - 4, TUI_LABEL, "views");
+    tui_hints(t, x + 2, y + 3, w - 4, views, 4);
+    tui_printf(t, x + 2, y + 5, w - 4, TUI_LABEL, "moving");
+    tui_hints(t, x + 2, y + 6, w - 4, moving, 3);
+    tui_hints(t, x + 2, y + 7, w - 4, moving + 3, 3);
+    tui_printf(t, x + 2, y + 9, w - 4, TUI_LABEL, "the screen");
+    tui_hints(t, x + 2, y + 10, w - 4, screen, 5);
 }
 
 /** @brief The right half of the status line: what is under the cursor. */
@@ -847,12 +862,9 @@ static void view(void *model, struct tui *t) {
     if (a->help)
         draw_help(t);
     detail(a, right, sizeof right);
-    tui_statusbar(t,
-                  a->tab == 0   ? "TAB view  1-4 area  j/k move  s sort  ? help"
-                  : a->tab == 1 ? "TAB view  r refresh  ? help"
-                  : a->tab == 2 ? "TAB view  j/k move  s sort  ? help"
-                                : "TAB view  r refresh  ? help",
-                  right);
+    tui_statusbar(t, NULL, right);
+    tui_hints(t, 0, t->h - 1, t->w - 20, a->tab == 0 ? storage_bar : view_bar,
+              4);
 }
 
 static bool parse_areas(const char *s, unsigned int *mask) {
