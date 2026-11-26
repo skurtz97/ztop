@@ -37,11 +37,13 @@ console commands, not sources of VSM data.  Nothing overlaps.
 
 Rejected as sources, and why:
 
-- Reading the CVT and its VSM control blocks directly.  It works (the PSA
-  reads fine from a plain `-m32` program) but the offsets are an internal
-  interface: they move between releases, and `CVTVSTGX` -- the structure
-  that holds the PLPA/FLPA/MLPA extents -- is not reachable from a field
-  the manual documents.
+- Reading the CVT and its VSM control blocks directly, for storage.  It
+  works (the PSA reads fine from a plain `-m32` program) but those offsets
+  are an internal interface, and `CVTVSTGX` -- the structure that holds the
+  PLPA/FLPA/MLPA extents -- is not reachable from a field the manual
+  documents.  `VSMLIST` names what it returns; the VSM control blocks do
+  not.  The CVT and ASVT are read for the jobs view, where the fields used
+  are listed as programming interfaces and no callable service exists.
 - SMF records (71, 78).  Writing them is a system decision, reading them is
   privileged, and the delay makes them useless for a live display.
 - Console displays through `opercmd`.  Correct numbers, but it needs
@@ -116,16 +118,46 @@ a percentage because the unallocated request returns the holes, so
 footprint plus holes is the mapped extent; SQA, LSQA and the private area
 have no such request and show used, free and mapped without a total.
 
+## System and jobs
+
+The CVT gives the system name (`CVTSNAME`, CVT+0x154) and the ASVT
+(`CVTASVT`, CVT+0x22C).  The ASVT holds `ASVTMAXU` at +0x204 and the
+entries at +0x210; bit 0 of an entry means the ASID is free, otherwise it
+is the ASCB address.  From the ASCB the view takes `ASCBASID` (halfword at
++0x24) and `ASCBSRBT`'s pointer `ASCBJBNS` (fullword at +0xB0) for the
+job name.  All of these are in the data-areas manual as programming
+interfaces, and none needs authorization.
+
+The fields are read as bytes with `memcpy`, never by casting an integer to
+a pointer, so a misaligned read cannot fault.  The strings stay EBCDIC:
+the program is compiled in EBCDIC mode and the terminal converts on
+output, so converting them first would double-convert.  This was measured
+the other way round first -- `__e2a_l` in the middle produced mojibake on
+the terminal and is not used.
+
+CPU time is deliberately absent: `ASCBEJST` did not advance while a test
+process burned 0.88 s of CPU (measured on CBT), so it is not a live field.
+
 ## The terminal
 
-A cell buffer and a diff flush, not curses.  ncurses brings its own
-terminfo database, which is another thing to install and keep in step on
-every z/OS system, and its output is a stream of absolute cursor motion
-anyway.  `src/tui.c` keeps one screen of cells and one of what is already
-on the glass, and writes only the runs that differ, with one style change
-per run.  No Unicode: the box and the bar are `+`, `-`, `|`, `#`, because
-the terminal path is an EBCDIC-to-ASCII conversion that is not a charset
-translation.
+`tui/` is a small library, not a curses replacement: a cell buffer with a
+diffing flush, a message loop and widgets.  The loop is the Elm shape
+Bubble Tea made common -- the application owns a model, receives a
+message (key, resize, tick) and redraws from the model -- because it keeps
+the terminal code out of the application and gives every view the same
+keys.  The widgets are a viewport with its own selection and scroll
+offset, a table built from columns and a cell callback, tabs, a single
+line input, a progress bar and a status line; an application that wants no
+tabs simply never draws them.  Commands and subscriptions are not modelled:
+a tick message and a return value saying "redraw" are enough here, and a
+`Cmd` type in C would be a function pointer by another name.
+
+The buffer keeps one screen of cells and one of what is already on the
+glass, and writes only the runs that differ, with one style change per
+run.  The library is compiled into the program rather than linked from an
+archive, but `tui/Makefile` can build `libtui.a` for reuse.  No Unicode:
+the box and the bar are `+`, `-`, `|`, `#`, because the terminal path is
+an EBCDIC-to-ASCII conversion that is not a charset translation.
 
 Three z/OS details are load-bearing:
 
@@ -153,7 +185,11 @@ Three z/OS details are load-bearing:
   different source, and none is planned.
 - `SP=PVT` output is already grouped by owning TCB, but the view still
   prints one list; per-TCB folding is a display change, not a data change.
-- The full-screen view has been exercised on a z/OS pty: area switching,
-  scrolling, help, quit and the cursor restore.  What has not been seen is
-  a real xterm over SSH answering the size query; a terminal that ignores
-  `ESC[6n` falls back to `COLUMNS`/`LINES` or 80x24.
+- The full-screen view has been exercised on a Linux pty and a z/OS pty:
+  view switching, area switching, scrolling, help, quit and the cursor
+  restore.  What has not been seen is a real xterm over SSH answering the
+  size query; a terminal that ignores `ESC[6n` falls back to
+  `COLUMNS`/`LINES` or 80x24.
+- The jobs view lists every address space and its ASID and ASCB; job name
+  lookup uses the documented `ASCBJBNS` pointer.  Sorting, filtering and
+  per-job storage are not implemented.
