@@ -65,9 +65,11 @@ check: ztop
 	./ztop -a pvt
 	./ztop -j
 
-test: tests/test_vsm.c src/vsm.c tui/test_tui.c tui/tui.c
+test: tests/test_vsm.c tests/test_sys.c src/vsm.c src/sys.c tui/test_tui.c tui/tui.c
 	$(TESTCC) $(TESTFLAGS) -o tests/test_vsm tests/test_vsm.c src/vsm.c
 	./tests/test_vsm
+	$(TESTCC) $(TESTFLAGS) -Isrc -o tests/test_sys tests/test_sys.c src/sys.c
+	./tests/test_sys
 	$(TESTCC) $(TESTFLAGS) -Itui -o tui/test_tui tui/test_tui.c tui/tui.c
 	./tui/test_tui
 
