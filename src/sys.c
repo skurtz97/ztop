@@ -39,8 +39,10 @@ static void ebcdic(char *dst, size_t dstlen, const void *src, size_t srclen) {
     if (dstlen == 0)
         return;
     n = srclen < dstlen - 1 ? srclen : dstlen - 1;
-    if (n > 0)
-        __e2a_l(dst, src, n);
+    if (n > 0) {
+        memcpy(dst, src, n);
+        __e2a_l(dst, n); /* converts in place */
+    }
     dst[n] = '\0';
     while (n > 0 && dst[n - 1] == ' ')
         dst[--n] = '\0';
