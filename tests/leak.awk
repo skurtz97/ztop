@@ -1,20 +1,18 @@
-/^(HEAP|HEAP24|ANYHEAP|BELOWHEAP|THREADHEAP|Additional Heap) statistics:/ {
-    inheap = 1
-}
-/^End of Storage Report/ {
-    inheap = 0
-}
-inheap && /^Successful Get Heap requests:/ {
-    get += $NF
-}
-inheap && /^Successful Free Heap requests:/ {
-    fre += $NF
-}
-inheap && /^Successful Create Heap requests:/ {
-    cre += $NF
-}
-inheap && /^Successful Discard Heap requests:/ {
-    dis += $NF
+{
+    if ($0 == "HEAP statistics:" || $0 == "HEAP24 statistics:" ||
+        $0 == "ANYHEAP statistics:" || $0 == "BELOWHEAP statistics:" ||
+        $0 == "THREADHEAP statistics:" || $0 == "Additional Heap statistics:")
+        inheap = 1
+    if ($0 == "End of Storage Report")
+        inheap = 0
+    if (inheap && index($0, "Successful Get Heap requests:"))
+        get += $NF
+    if (inheap && index($0, "Successful Free Heap requests:"))
+        fre += $NF
+    if (inheap && index($0, "Successful Create Heap requests:"))
+        cre += $NF
+    if (inheap && index($0, "Successful Discard Heap requests:"))
+        dis += $NF
 }
 END {
     if (get != fre || cre != dis) {
