@@ -18,8 +18,10 @@
 #define WORK_SIZE (1024u * 1024u)
 
 #if defined(__MVS__)
+/* HLASM upcases the ESD name of the CSECT, so the assembler side is
+ * exported as ZVSLIST whatever case the source is written in. */
+extern int zvslist(void *) __asm__("ZVSLIST");
 #pragma linkage(zvslist, OS)
-extern int zvslist(void *);
 
 /* The 31-bit request block.  R13 is saved by the stub, so the save area has
  * to live in storage the C compiler gives us, not in the read-only CSECT. */

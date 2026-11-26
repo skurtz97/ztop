@@ -20,6 +20,7 @@ the terminal layer and `src/ztop.c` is the command.
 z/OS only for the real binary, with IBM Open XL and HLASM in the path:
 
 ```sh
+chtag -t -c ISO8859-1 Makefile   # after a checkout: make reads it as text
 make          # ibm-clang -std=c23 -m32, plus `as` for src/zvslist.s
 make apf      # then give the executable the APF bit
 ```
@@ -28,8 +29,8 @@ The parser and the TUI framework have no z/OS dependency, so on any host
 with a C compiler and a terminal:
 
 ```sh
-make test     # synthetic VSMLIST data areas, no z/OS needed
-make demo     # a small exercise of the TUI framework
+make test TESTCC=cc     # synthetic VSMLIST data areas, no z/OS needed
+make demo TESTCC=cc     # a small exercise of the TUI framework
 ```
 
 ## Use

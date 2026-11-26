@@ -25,7 +25,7 @@ CFLAGS  = -std=c23 -O2 -m32 -Wall -Wextra -Wshadow -Wpedantic \
           -D_XOPEN_SOURCE=500 -D_POSIX_C_SOURCE=200112L
 # The parser and the TUI framework have no z/OS dependency; the test and
 # demo targets build them on the host so a Linux tree can check them.
-TESTCC  = cc
+TESTCC  = ibm-clang
 TESTFLAGS = -std=c17 -g -O1 -Wall -Wextra -Wshadow -Wpedantic \
             -D_XOPEN_SOURCE=500 -D_POSIX_C_SOURCE=200112L
 # AC(1) is half of what makes an executable APF-authorized, the other
