@@ -41,6 +41,7 @@ z/OS for the real binary, with IBM Open XL in the path:
 ```sh
 make          # ibm-clang -std=c23 -m32; the .S is assembled by HLASM
 make check    # storage, system and jobs
+make leakcheck  # every mode under the LE storage and heap checks
 ```
 
 The parser, the library and `sys.c`'s structure have no z/OS dependency,

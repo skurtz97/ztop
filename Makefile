@@ -48,6 +48,14 @@ TESTCC    = cc
 TESTFLAGS = -std=c17 -g -O1 -Wall -Wextra -Wshadow -Wpedantic \
             -D_XOPEN_SOURCE=500 -D_POSIX_C_SOURCE=200112L
 
+# Language Environment sees every heap request the program makes.  Its
+# storage report is therefore the leak test a z/OS user can run: if the
+# gets and the frees differ by the end of the enclave, something was
+# allocated and never freed.  HEAPCHK(ON) additionally walks the heap at
+# every call, so a double free or an overlay abends instead of hiding.
+LEAKDIR  = $(HOME)/tmp/ztop/leak
+LEAKAWK  = tests/leak.awk
+
 all:
 	@(uname -s | grep OS/390 > /dev/null) || \
 	    { echo "ztop builds only on z/OS; this tree is a backup copy"; exit 1; }
@@ -76,5 +84,22 @@ test: tests/test_vsm.c tests/test_sys.c src/vsm.c src/sys.c tui/test_tui.c tui/t
 demo: tui/demo.c tui/tui.c
 	$(TESTCC) $(TESTFLAGS) -Itui -o tui/demo tui/demo.c tui/tui.c
 
+leakcheck: ztop
+	@mkdir -p $(LEAKDIR)
+	@set -e; opts='RPTSTG(ON),RPTOPTS(ON),HEAPCHK(ON)'; \
+	for a in csa sqa lsqa pvt; do \
+	    _CEE_RUNOPTS=$$opts ./ztop -a $$a \
+	        > $(LEAKDIR)/$$a.out 2> $(LEAKDIR)/$$a.log; \
+	    printf '%-5s ' $$a; \
+	    awk $(LEAKAWK) $(LEAKDIR)/$$a.log; \
+	done
+	@set -e; opts='RPTSTG(ON),RPTOPTS(ON),HEAPCHK(ON)'; \
+	for m in -s -j -p; do \
+	    _CEE_RUNOPTS=$$opts ./ztop $$m \
+	        > $(LEAKDIR)/$$m.out 2> $(LEAKDIR)/$$m.log; \
+	    printf '%-5s ' $$m; \
+	    awk $(LEAKAWK) $(LEAKDIR)/$$m.log; \
+	done
+
 clean:
-	rm -f ztop $(OBJ) tests/test_vsm tui/test_tui tui/demo
+	rm -f ztop $(OBJ) tests/test_vsm tests/test_sys tui/test_tui tui/demo
