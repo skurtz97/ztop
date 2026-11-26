@@ -7,7 +7,14 @@ The pty is 100x30; every key is followed by a snapshot of the screen as
 the escapes would leave it.  No termios is touched, so the program sees a
 plain pty and uses its own raw mode.
 """
-import fcntl, os, pty, select, struct, termios, time
+import fcntl
+import os
+import pty
+import select
+import struct
+import sys
+import termios
+import time
 
 W, H = 100, 30
 grid = [[' '] * W for _ in range(H)]
@@ -51,7 +58,8 @@ def feed(data):
 pid, fd = pty.fork()
 if pid == 0:
     os.environ['TERM'] = 'xterm'
-    os.execv('./ztop', ['./ztop', '-d', '60'])
+    prog = sys.argv[1] if len(sys.argv) > 1 else './ztop'
+    os.execv(prog, [prog, '-d', '60'])  # noqa: S606 - exec is the point
 
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', H, W, 0, 0))
 
@@ -70,7 +78,7 @@ def pump(t):
         feed(d)
 
 pump(2.0)
-for k in [b'1', b'2', b'4', b'\t', b'?', b'?', b'q']:
+for k in [b'\t', b'\t', b'\t', b'\t', b'?', b'?', b'q']:
     os.write(fd, k)
     pump(1.0)
     print('=== after', k)

@@ -163,10 +163,15 @@ static bool collect_area(struct vsm_info *v, int area, bool dump) {
 }
 
 /** @brief Fraction of the mapped area in use, or -1 when there is no total. */
+/* Only CSA and PVT get an unallocated pass, so only they have a total. */
+static bool has_total(const struct vsm_info *v) {
+    return (v->area == VSM_CSA || v->area == VSM_PVT) && v->unalloc_valid;
+}
+
 static int pct(const struct vsm_info *v) {
     uint64_t total;
 
-    if (!v->unalloc_valid || v->area != VSM_CSA)
+    if (!has_total(v))
         return -1;
     total = v->foot + v->unalloc;
     if (total == 0)
@@ -582,7 +587,7 @@ static void draw_storage(struct tui *t, struct app *a) {
     human(v->used, used, sizeof used);
     human(v->free, freed, sizeof freed);
     human(v->foot, mapped, sizeof mapped);
-    if (v->area == VSM_CSA && v->unalloc_valid) {
+    if (has_total(v)) {
         human(v->foot + v->unalloc, total, sizeof total);
         (void)snprintf(pcbuf, sizeof pcbuf, "use %d%%", p);
     } else {
