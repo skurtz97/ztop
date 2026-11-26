@@ -39,10 +39,15 @@ widgets for a viewport, a table, tabs, a text input and a status line.
 z/OS for the real binary, with IBM Open XL in the path:
 
 ```sh
-make          # ibm-clang -std=c23 -m32; the .S is assembled by HLASM
-make check    # storage, system and jobs
+make tag        # once after git checkout: tag the ASCII sources
+make            # ibm-clang -std=c23 -m32; the .S is assembled by HLASM
+make check      # storage, system and jobs
 make leakcheck  # every mode under the LE storage and heap checks
 ```
+
+`make tag` matters because git leaves the files untagged, and the z/OS
+tools then read ASCII as EBCDIC: make spins on the Makefile, `sh` rejects
+the test script.
 
 The parser, the library and `sys.c`'s structure have no z/OS dependency,
 so on any host with a C compiler:

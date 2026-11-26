@@ -54,6 +54,14 @@ TESTFLAGS = -std=c17 -g -O1 -Wall -Wextra -Wshadow -Wpedantic \
 # allocated and never freed.  HEAPCHK(ON) additionally walks the heap at
 # every call, so a double free or an overlay abends instead of hiding.
 
+# git checkout leaves every source untagged, and the z/OS tools then read
+# ASCII through the EBCDIC converter: make spins on the Makefile, sh
+# rejects the script, awk reads garbage.  Run this once after a checkout.
+tag:
+	@-chtag -t -c ISO8859-1 Makefile README.md DESIGN.md tests/leakcheck.sh
+	@-chtag -t -c ISO8859-1 src/*.c src/*.h src/*.S tui/*.c tui/*.h
+	@-chtag -t -c ISO8859-1 tui/Makefile tui/test_tui.c tui/demo.c
+
 all:
 	@uname -s | grep OS/390 > /dev/null || \
 	    { echo "ztop builds only on z/OS; this tree is a backup copy"; exit 1; }
