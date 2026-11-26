@@ -9,12 +9,12 @@
  */
 #include "sys.h"
 
-#include <string.h>
 #include <sys/utsname.h>
 #include <unistd.h>
 
 #ifdef __MVS__
 #include <stdint.h>
+#include <string.h>
 
 /** @brief Read a big-endian halfword from an absolute address. */
 static uint32_t rd32(uintptr_t a) {
@@ -24,27 +24,28 @@ static uint32_t rd32(uintptr_t a) {
     return v;
 }
 
-/** @brief Read one byte from an absolute address. */
-static unsigned char rd8(uintptr_t a) {
-    unsigned char v;
+/** @brief Read a big-endian halfword from an absolute address. */
+static uint16_t rd16(uintptr_t a) {
+    uint16_t v;
 
-    memcpy(&v, (const void *)a, 1);
+    memcpy(&v, (const void *)a, sizeof v);
     return v;
 }
 
-/** @brief Copy an EBCDIC field, blank padded, into ASCII. */
+/** @brief Copy an EBCDIC field and trim its blanks.
+ *
+ * The program runs in EBCDIC mode, and the terminal converts on output,
+ * so the bytes are kept as read; only the trailing blanks (X'40') go. */
 static void ebcdic(char *dst, size_t dstlen, const void *src, size_t srclen) {
     size_t n;
 
     if (dstlen == 0)
         return;
     n = srclen < dstlen - 1 ? srclen : dstlen - 1;
-    if (n > 0) {
+    if (n > 0)
         memcpy(dst, src, n);
-        __e2a_l(dst, n); /* converts in place */
-    }
     dst[n] = '\0';
-    while (n > 0 && dst[n - 1] == ' ')
+    while (n > 0 && (unsigned char)dst[n - 1] == 0x40)
         dst[--n] = '\0';
 }
 #endif
@@ -72,7 +73,7 @@ bool zsys_read(struct zsys *z) {
         if (entry & 0x80000000u)
             continue; /* ASID is free */
         j->ascb = entry;
-        j->asid = rd8((uintptr_t)entry + 0x24);
+        j->asid = rd16((uintptr_t)entry + 0x24);
         namep = rd32((uintptr_t)entry + 0xB0);
         if (namep == 0)
             continue;
