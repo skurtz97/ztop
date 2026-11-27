@@ -1,6 +1,6 @@
 # ztop
 
-What z/OS has where, from a z/OS UNIX shell over SSH: storage by subpool,
+What z/OS has where from a z/OS UNIX shell over SSH: storage by subpool,
 the system's identity, and one line per address space.
 
 ```text
