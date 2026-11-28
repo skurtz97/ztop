@@ -38,7 +38,9 @@ static_assert(offsetof(zmcs_req, csa) == 184, "zmcs_req.csa");
 static_assert(offsetof(zmcs_req, alet) == 32, "zmcs_req.alet");
 static_assert(offsetof(zmcs_req, ecb) == 28, "zmcs_req.ecb");
 static_assert(offsetof(zmcs_req, rsn) == 24, "zmcs_req.rsn");
-static_assert(sizeof(zmcs_req) == 188, "zmcs_req: runs into the next object");
+/* The end of the last field, not sizeof: save[] forces 8-byte alignment,
+ * so sizeof is 192 on -m32 and the padding is not part of the interface. */
+static_assert(offsetof(zmcs_req, csa) + 4 == 188, "zmcs_req.csa: runs into the next object");
 #endif
 
 #if defined(__MVS__)
