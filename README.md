@@ -69,12 +69,13 @@ ztop -j                 one line per address space
 ztop -p                 auxiliary storage and page data sets
 ztop -x                 dump the raw VSMLIST work and data areas
 ztop -d [seconds]       interactive, 10 s refresh (1..60)
+ztop -d -c              the same, with the MCS console (LOG view)
 ```
 
 With a terminal and no report option, `ztop` starts the full-screen view.
 Anything that selects a report (`-a`, `-s`, `-j`, `-x`) or pipes the output
 gets the one-shot text instead, suitable for `grep` and for a shell
-prompt.  There are four views, selected with `TAB`:
+prompt.  There are seven views, selected with `TAB`:
 
 | view | |
 | --- | --- |
@@ -82,25 +83,35 @@ prompt.  There are four views, selected with `TAB`:
 | SYSTEM | system and host, IPL date and time, real storage, address spaces |
 | JOBS | ASID, job name and ASCB address for every address space |
 | PAGING | auxiliary storage flags and the page data sets from ASMVT |
+| PS | PID, PPID, UID, state and CPU time per process, from `w_getpsent` |
+| FS | mount point, type, size, free space and read-only, from `w_getmntent` and `statvfs` |
+| LOG | the operator console, read only, from an extended MCS console (`-c`, needs APF) |
 
 | key | |
 | --- | --- |
 | `TAB`, `Shift-TAB`, click a tab | next / previous view |
-| `1`..`4` | in STORAGE: CSA, SQA, LSQA, private; elsewhere: switch view |
+| `1`..`7` | in STORAGE `1`..`4` are the areas; `5`..`7`, and any digit in another view, switch view |
 | `p` | pause/resume refresh |
 | `r` | collect now |
 | `+`/`-` | refresh 1..60 s |
 | `j`/`k`, arrows, `PgUp`/`PgDn`, `g`/`G` | move and scroll the selected table |
 | wheel, click a row | scroll, select a row |
 | `s`, `S` | next sort column, reverse it (the header shows both) |
-| `Enter` | every field of the selected subpool |
+| `Enter` | every field of the selected subpool, or of the TCB |
+| `i` | inspector pane beside the table (width permitting) |
+| `t` | in the private area: fold the subpools by owning TCB |
+| `/` | filter the table (`Enter` keeps it, `ESC` clears it) |
+| `:` | command: `csa` `sqa` `lsqa` `pvt` `sys` `jobs` `page` `ps` `fs` `fold` `pause` `help` `quit` |
 | `?` | help |
 | `q` | quit |
 
 Each table remembers its own selection and scroll position, so switching
-views does not lose your place.  The status line shows the subpool or
+views does not lose your place; a filter survives a tab switch, and `ESC`
+on the filter line removes it.  The status line shows the subpool or
 address space under the cursor.  The design, including why the data
-sources are what they are, is in [DESIGN.md](DESIGN.md).
+sources are what they are, is in [DESIGN.md](DESIGN.md); how a change is
+built, tested and reviewed, and the terms for using an AI agent at all,
+are in [AGENTS.md](AGENTS.md).
 
 ## What it is not
 

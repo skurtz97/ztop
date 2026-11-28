@@ -1,6 +1,6 @@
 ---
-# Checks for zash.  Run with `make tidy`.  Every check named here either
-# finds real bugs in a shell (memory, signals, integer handling) or keeps the
+# Checks for ztop.  Run with `make tidy`.  Every check named here either
+# finds real bugs here (memory, signals, integer handling) or keeps the
 # code in the style of the rest of the tree.  Checks that disagree with the
 # project's choices are switched off below, with the reason.
 Checks: >
@@ -82,7 +82,7 @@ Checks: >
 #                        scanner)
 
 WarningsAsErrors: ''
-HeaderFilterRegex: '^.*/src/.*\.h$'
+HeaderFilterRegex: "^(.*/)?(src|tui)/.*\\.h$"
 FormatStyle: file
 SystemHeaders: false
 

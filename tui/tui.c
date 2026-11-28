@@ -13,6 +13,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/select.h>
+#include <time.h>
 #include <unistd.h>
 
 #ifdef __MVS__
@@ -34,7 +35,7 @@
 #define CLEAR ESCS "[H" ESCS "[2J"
 #define RESET ESCS "[0m"
 
-static struct tui *g_tui;
+static tui *g_tui;
 static volatile sig_atomic_t g_winch;
 
 static void wr(int fd, const void *buf, size_t n) {
@@ -51,11 +52,12 @@ static void wr(int fd, const void *buf, size_t n) {
     }
 }
 
-static void restore(struct tui *t) {
+static void restore(tui *t) {
     if (!t->open)
         return;
-    wr(t->fd_out, RESET CUR_ON MOUSE_OFF ALT_OFF,
-       strlen(RESET CUR_ON MOUSE_OFF ALT_OFF));
+    /* Leave the graphics character set even if a signal cut a frame short. */
+    wr(t->fd_out, RESET ESCS "(B" CUR_ON MOUSE_OFF ALT_OFF,
+       strlen(RESET ESCS "(B" CUR_ON MOUSE_OFF ALT_OFF));
     (void)tcsetattr(t->fd_in, TCSANOW, &t->orig);
 }
 
@@ -65,19 +67,19 @@ static void on_winch(int sig) {
 }
 
 static void on_term(int sig) {
-    if (g_tui != NULL)
+    if (g_tui != nullptr)
         restore(g_tui);
     _exit(128 + sig);
 }
 
-static void out_flush(struct tui *t) {
+static void out_flush(tui *t) {
     if (t->olen > 0) {
         wr(t->fd_out, t->out, (size_t)t->olen);
         t->olen = 0;
     }
 }
 
-static void out(struct tui *t, const char *s, size_t n) {
+static void out(tui *t, const char *s, size_t n) {
     if (t->olen + (int)n > (int)sizeof t->out)
         out_flush(t);
     if (n > sizeof t->out) {
@@ -88,11 +90,11 @@ static void out(struct tui *t, const char *s, size_t n) {
     t->olen += (int)n;
 }
 
-static void outs(struct tui *t, const char *s) {
+static void outs(tui *t, const char *s) {
     out(t, s, strlen(s));
 }
 
-static void outf(struct tui *t, const char *fmt, ...) {
+static void outf(tui *t, const char *fmt, ...) {
     char b[64];
     va_list ap;
     int n;
@@ -104,8 +106,8 @@ static void outf(struct tui *t, const char *fmt, ...) {
         out(t, b, (size_t)n < sizeof b ? (size_t)n : sizeof b - 1);
 }
 
-static void sgr(struct tui *t, int fg, int bg, int attr) {
-    char b[40];
+static void sgr(tui *t, int fg, int bg, int attr) {
+    char b[64];
     int n = snprintf(b, sizeof b, "%s[0", ESCS);
 
     if (attr & TUI_BOLD)
@@ -116,7 +118,14 @@ static void sgr(struct tui *t, int fg, int bg, int attr) {
         n += snprintf(b + n, sizeof b - (size_t)n, ";4");
     if (attr & TUI_REVERSE)
         n += snprintf(b + n, sizeof b - (size_t)n, ";7");
-    n += snprintf(b + n, sizeof b - (size_t)n, ";3%d;4%dm", fg, bg);
+    if (fg == TUI_COLOR_DEFAULT)
+        n += snprintf(b + n, sizeof b - (size_t)n, ";39");
+    else
+        n += snprintf(b + n, sizeof b - (size_t)n, ";38;5;%d", fg);
+    if (bg == TUI_COLOR_DEFAULT)
+        n += snprintf(b + n, sizeof b - (size_t)n, ";49m");
+    else
+        n += snprintf(b + n, sizeof b - (size_t)n, ";48;5;%dm", bg);
     out(t, b, (size_t)n);
 }
 
@@ -135,7 +144,7 @@ static bool cpr_size(int in, int outfd, int *w, int *h) {
 
         FD_ZERO(&f);
         FD_SET(in, &f);
-        int r = select(in + 1, &f, NULL, NULL, &tv);
+        int r = select(in + 1, &f, nullptr, nullptr, &tv);
         if (r < 0 && errno == EINTR)
             continue;
         if (r <= 0)
@@ -180,7 +189,7 @@ static bool cpr_size(int in, int outfd, int *w, int *h) {
     return true;
 }
 
-static void probe_size(struct tui *t, int *w, int *h) {
+static void probe_size(tui *t, int *w, int *h) {
     struct winsize ws;
 
     *w = 80;
@@ -192,9 +201,9 @@ static void probe_size(struct tui *t, int *w, int *h) {
     } else if (!cpr_size(t->fd_in, t->fd_out, w, h)) {
         const char *c = getenv("COLUMNS");
         const char *l = getenv("LINES");
-        if (c != NULL && atoi(c) > 0)
+        if (c != nullptr && atoi(c) > 0)
             *w = atoi(c);
-        if (l != NULL && atoi(l) > 0)
+        if (l != nullptr && atoi(l) > 0)
             *h = atoi(l);
     }
     if (*w > TUI_MAX_W)
@@ -207,8 +216,8 @@ static void probe_size(struct tui *t, int *w, int *h) {
         *h = 24;
 }
 
-bool tui_alloc(struct tui *t, int w, int h) {
-    struct tui_cell *cur, *old;
+bool tui_alloc(tui *t, int w, int h) {
+    tui_cell *cur, *old;
 
     if (w < 2)
         w = 2;
@@ -220,7 +229,7 @@ bool tui_alloc(struct tui *t, int w, int h) {
         h = TUI_MAX_H;
     cur = calloc((size_t)w * (size_t)h, sizeof *cur);
     old = calloc((size_t)w * (size_t)h, sizeof *old);
-    if (cur == NULL || old == NULL) {
+    if (cur == nullptr || old == nullptr) {
         free(cur);
         free(old);
         return false;
@@ -236,7 +245,7 @@ bool tui_alloc(struct tui *t, int w, int h) {
     return true;
 }
 
-bool tui_resize(struct tui *t) {
+bool tui_resize(tui *t) {
     int w, h;
 
     probe_size(t, &w, &h);
@@ -245,10 +254,39 @@ bool tui_resize(struct tui *t) {
     return tui_alloc(t, w, h);
 }
 
-bool tui_open(struct tui *t) {
+/* z/OS C runtime prefers sigaction(); plain signal() is not used. */
+static void install_signal(int sig, void (*fn)(int)) {
+    struct sigaction sa = {};
+
+    sa.sa_handler = fn;
+    (void)sigemptyset(&sa.sa_mask);
+    (void)sigaction(sig, &sa, nullptr);
+}
+
+/* DEC Special Graphics are VT100 core, but a terminal we do not recognise
+ * is not worth the risk: `lqqqk` where a corner should be is worse than
+ * `+----+`.  This is the one place the glyph backend is chosen. */
+static bool term_glyphs(void) {
+    static const char *const ok[] = {
+        "xterm", "screen",  "tmux",   "rxvt",    "vt100", "vt220",
+        "linux", "ansi",    "cygwin", "alacrit", "foot",  "wezterm",
+        "kitty", "konsole", "putty",  "gnome",   "iterm", "st",
+    };
+    const char *term = getenv("TERM");
+
+    if (term == nullptr || term[0] == '\0')
+        return false;
+    for (size_t i = 0; i < sizeof ok / sizeof ok[0]; i++)
+        if (strncmp(term, ok[i], strlen(ok[i])) == 0)
+            return true;
+    return false;
+}
+
+bool tui_open(tui *t) {
     struct termios r;
 
     memset(t, 0, sizeof *t);
+    t->glyphs = term_glyphs();
     t->fd_in = 0;
     t->fd_out = 1;
     if (!isatty(t->fd_in) || !isatty(t->fd_out))
@@ -267,54 +305,92 @@ bool tui_open(struct tui *t) {
     t->open = true;
     g_tui = t;
     g_winch = 0;
-    (void)signal(SIGTERM, on_term);
-    (void)signal(SIGINT, on_term);
-    (void)signal(SIGHUP, on_term);
-    (void)signal(SIGQUIT, on_term);
+    install_signal(SIGTERM, on_term);
+    install_signal(SIGINT, on_term);
+    install_signal(SIGHUP, on_term);
+    install_signal(SIGQUIT, on_term);
 #ifdef SIGWINCH
-    (void)signal(SIGWINCH, on_winch);
+    install_signal(SIGWINCH, on_winch);
 #endif
     outs(t, ALT_ON CUR_OFF CLEAR MOUSE_ON);
     out_flush(t);
     if (!tui_resize(t)) {
         restore(t);
         t->open = false;
-        g_tui = NULL;
+        g_tui = nullptr;
         return false;
     }
     return true;
 }
 
-void tui_close(struct tui *t) {
+void tui_close(tui *t) {
     if (!t->open)
         return;
     restore(t);
     t->open = false;
-    g_tui = NULL;
+    g_tui = nullptr;
     free(t->cur);
     free(t->old);
-    t->cur = NULL;
-    t->old = NULL;
+    t->cur = nullptr;
+    t->old = nullptr;
 }
 
-void tui_size(struct tui *t, int *w, int *h) {
+void tui_size(tui *t, int *w, int *h) {
     *w = t->w;
     *h = t->h;
 }
 
-void tui_clear(struct tui *t) {
+void tui_clear(tui *t) {
     int n = t->w * t->h;
 
     for (int i = 0; i < n; i++) {
         t->cur[i].ch = ' ';
-        t->cur[i].fg = 7;
-        t->cur[i].bg = 0;
+        t->cur[i].fg = TUI_PLAIN.fg;
+        t->cur[i].bg = TUI_PLAIN.bg;
         t->cur[i].attr = 0;
     }
 }
 
-void tui_fill(struct tui *t, int x, int y, int w, int h, char ch,
-              tui_style st) {
+/* ---- layout primitives ----------------------------------------------- */
+
+void tui_split_v(tui_rect r, int top_h, tui_rect *top, tui_rect *bot) {
+    if (top_h < 0)
+        top_h = 0;
+    if (top_h > r.h)
+        top_h = r.h;
+    if (top != nullptr)
+        *top = (tui_rect){r.x, r.y, r.w, top_h};
+    if (bot != nullptr)
+        *bot = (tui_rect){r.x, r.y + top_h, r.w, r.h - top_h};
+}
+
+void tui_split_h(tui_rect r, int left_w, tui_rect *left, tui_rect *right) {
+    if (left_w < 0)
+        left_w = 0;
+    if (left_w > r.w)
+        left_w = r.w;
+    if (left != nullptr)
+        *left = (tui_rect){r.x, r.y, left_w, r.h};
+    if (right != nullptr)
+        *right = (tui_rect){r.x + left_w, r.y, r.w - left_w, r.h};
+}
+
+tui_rect tui_inset(tui_rect r, int dx, int dy) {
+    int nw = r.w - 2 * dx;
+    int nh = r.h - 2 * dy;
+
+    return (tui_rect){r.x + dx, r.y + dy, nw > 0 ? nw : 0, nh > 0 ? nh : 0};
+}
+
+bool tui_rect_hit(tui_rect r, int x, int y) {
+    if (x < r.x || x >= r.x + r.w)
+        return false;
+    if (y < r.y || y >= r.y + r.h)
+        return false;
+    return true;
+}
+
+void tui_fill(tui *t, int x, int y, int w, int h, char ch, tui_style st) {
     if (x < 0) {
         w += x;
         x = 0;
@@ -330,7 +406,7 @@ void tui_fill(struct tui *t, int x, int y, int w, int h, char ch,
     if (w <= 0 || h <= 0)
         return;
     for (int j = y; j < y + h; j++) {
-        struct tui_cell *row = t->cur + (size_t)j * (size_t)t->w;
+        tui_cell *row = t->cur + (size_t)j * (size_t)t->w;
         for (int i = x; i < x + w; i++) {
             row[i].ch = (unsigned char)ch;
             row[i].fg = st.fg;
@@ -340,11 +416,10 @@ void tui_fill(struct tui *t, int x, int y, int w, int h, char ch,
     }
 }
 
-void tui_put(struct tui *t, int x, int y, const char *s, int maxw,
-             tui_style st) {
+void tui_put(tui *t, int x, int y, const char *s, int maxw, tui_style st) {
     if (y < 0 || y >= t->h)
         return;
-    struct tui_cell *row = t->cur + (size_t)y * (size_t)t->w;
+    tui_cell *row = t->cur + (size_t)y * (size_t)t->w;
     for (int i = 0; s[i] != '\0' && x < t->w; i++, x++) {
         unsigned char c = (unsigned char)s[i];
         if (maxw > 0 && i >= maxw)
@@ -360,8 +435,8 @@ void tui_put(struct tui *t, int x, int y, const char *s, int maxw,
     }
 }
 
-void tui_printf(struct tui *t, int x, int y, int maxw, tui_style st,
-                const char *fmt, ...) {
+void tui_printf(tui *t, int x, int y, int maxw, tui_style st, const char *fmt,
+                ...) {
     char b[512];
     va_list ap;
 
@@ -371,27 +446,49 @@ void tui_printf(struct tui *t, int x, int y, int maxw, tui_style st,
     tui_put(t, x, y, b, maxw, st);
 }
 
-void tui_box(struct tui *t, int x, int y, int w, int h, tui_style st) {
-    tui_box_frame(t, x, y, w, h, st, NULL, TUI_PLAIN);
+void tui_box(tui *t, int x, int y, int w, int h, tui_style st) {
+    tui_box_frame(t, x, y, w, h, st, nullptr, TUI_PLAIN);
 }
 
-void tui_box_frame(struct tui *t, int x, int y, int w, int h, tui_style st,
+/* ---- line drawing ---------------------------------------------------- */
+
+/* A cell holds one byte, so a line is either a DEC Special Graphics letter
+ * (the terminal draws the line) or the ASCII the frame has always used.
+ * The order is the order of the calls below and means nothing else. */
+enum { G_TL, G_TR, G_BL, G_BR, G_H, G_V, G_SHADE, G_COUNT };
+
+static char glyph(const tui *t, int g) {
+    static const char dec[] = {'l', 'k', 'm', 'j', 'q', 'x', 'a'};
+    static const char ascii[] = {'+', '+', '+', '+', '-', '|', '#'};
+
+    return t->glyphs ? dec[g] : ascii[g];
+}
+
+static void putg(tui *t, int x, int y, int g, tui_style st) {
+    char s[2] = {glyph(t, g), '\0'};
+
+    if (t->glyphs)
+        st.attr = (unsigned char)(st.attr | TUI_ACS);
+    tui_put(t, x, y, s, 1, st);
+}
+
+void tui_box_frame(tui *t, int x, int y, int w, int h, tui_style st,
                    const char *title, tui_style title_st) {
     if (w < 2 || h < 2)
         return;
     for (int i = 1; i < w - 1; i++) {
-        tui_put(t, x + i, y, "-", 1, st);
-        tui_put(t, x + i, y + h - 1, "-", 1, st);
+        putg(t, x + i, y, G_H, st);
+        putg(t, x + i, y + h - 1, G_H, st);
     }
     for (int j = 1; j < h - 1; j++) {
-        tui_put(t, x, y + j, "|", 1, st);
-        tui_put(t, x + w - 1, y + j, "|", 1, st);
+        putg(t, x, y + j, G_V, st);
+        putg(t, x + w - 1, y + j, G_V, st);
     }
-    tui_put(t, x, y, "+", 1, st);
-    tui_put(t, x + w - 1, y, "+", 1, st);
-    tui_put(t, x, y + h - 1, "+", 1, st);
-    tui_put(t, x + w - 1, y + h - 1, "+", 1, st);
-    if (title != NULL && title[0] != '\0' && w > 6) {
+    putg(t, x, y, G_TL, st);
+    putg(t, x + w - 1, y, G_TR, st);
+    putg(t, x, y + h - 1, G_BL, st);
+    putg(t, x + w - 1, y + h - 1, G_BR, st);
+    if (title != nullptr && title[0] != '\0' && w > 6) {
         char chip[64];
         int n = (int)strlen(title);
         int room = w - 6;
@@ -403,7 +500,7 @@ void tui_box_frame(struct tui *t, int x, int y, int w, int h, tui_style st,
     }
 }
 
-void tui_flush(struct tui *t) {
+void tui_flush(tui *t) {
     int lfg = -1, lbg = -1, la = -1;
 
     if (!t->open)
@@ -414,8 +511,8 @@ void tui_flush(struct tui *t) {
         t->full = false;
     }
     for (int y = 0; y < t->h; y++) {
-        struct tui_cell *row = t->cur + (size_t)y * (size_t)t->w;
-        struct tui_cell *orow = t->old + (size_t)y * (size_t)t->w;
+        tui_cell *row = t->cur + (size_t)y * (size_t)t->w;
+        tui_cell *orow = t->old + (size_t)y * (size_t)t->w;
         int x = 0;
 
         while (x < t->w) {
@@ -432,11 +529,19 @@ void tui_flush(struct tui *t) {
                 x++;
             outf(t, "%s[%d;%dH", ESCS, y + 1, start + 1);
             for (int i = start; i < x; i++) {
+                bool acs = (row[i].attr & TUI_ACS) != 0;
+
                 if (row[i].fg != lfg || row[i].bg != lbg || row[i].attr != la) {
                     sgr(t, row[i].fg, row[i].bg, row[i].attr);
                     lfg = row[i].fg;
                     lbg = row[i].bg;
                     la = row[i].attr;
+                }
+                /* An SGR reset does not leave the graphics set, so this is
+                 * tracked apart from the colours. */
+                if (acs != t->acs_on) {
+                    outs(t, acs ? ESCS "(0" : ESCS "(B");
+                    t->acs_on = acs;
                 }
                 char c = (char)(row[i].ch != 0 ? row[i].ch : ' ');
                 out(t, &c, 1);
@@ -455,12 +560,12 @@ int tui_tabs_hit(int x, const char *const *labels, int n) {
 
         if (x >= at && x < at + len)
             return i;
-        at += len + 1;
+        at += len + 2; /* the gap drawn by tui_tabs_draw */
     }
     return -1;
 }
 
-int tui_tabs_draw(struct tui *t, int x, int y, const char *const *labels, int n,
+int tui_tabs_draw(tui *t, int x, int y, const char *const *labels, int n,
                   int active) {
     for (int i = 0; i < n; i++) {
         int len = (int)strlen(labels[i]) + 2;
@@ -468,19 +573,17 @@ int tui_tabs_draw(struct tui *t, int x, int y, const char *const *labels, int n,
         tui_printf(t, x, y, len, i == active ? TUI_TAB_ON : TUI_TAB_OFF, " %s ",
                    labels[i]);
         x += len;
-        if (i + 1 < n) {
-            tui_put(t, x, y, "|", 1, TUI_META);
-            x += 1;
-        }
+        if (i + 1 < n)
+            x += 2; /* a gap, not a `|`: separators read as a DOS menu */
     }
     return x;
 }
 
-void tui_rule(struct tui *t, int y, char ch, tui_style st) {
+void tui_rule(tui *t, int y, char ch, tui_style st) {
     tui_fill(t, 0, y, t->w, 1, ch, st);
 }
 
-static void shift_in(struct tui *t, int n) {
+static void shift_in(tui *t, int n) {
     if (n >= t->inlen) {
         t->inlen = 0;
         return;
@@ -489,7 +592,7 @@ static void shift_in(struct tui *t, int n) {
     t->inlen -= n;
 }
 
-static int decode(struct tui *t) {
+static int decode(tui *t) {
     unsigned char *b = t->in;
 
     if (t->inlen == 0)
@@ -610,7 +713,7 @@ static int decode(struct tui *t) {
     return TUI_KEY_NONE;
 }
 
-int tui_key(struct tui *t, int timeout_ms) {
+int tui_key(tui *t, int timeout_ms) {
     if (g_winch) {
         g_winch = 0;
         return TUI_KEY_RESIZE;
@@ -627,7 +730,7 @@ int tui_key(struct tui *t, int timeout_ms) {
         }
         int wait = (t->inlen > 0) ? 30 : timeout_ms;
         fd_set f;
-        struct timeval tv, *ptv = NULL;
+        struct timeval tv, *ptv = nullptr;
 
         FD_ZERO(&f);
         FD_SET(t->fd_in, &f);
@@ -636,7 +739,7 @@ int tui_key(struct tui *t, int timeout_ms) {
             tv.tv_usec = (wait % 1000) * 1000;
             ptv = &tv;
         }
-        int r = select(t->fd_in + 1, &f, NULL, NULL, ptv);
+        int r = select(t->fd_in + 1, &f, nullptr, nullptr, ptv);
         if (r < 0) {
             if (errno == EINTR)
                 continue;
@@ -665,21 +768,51 @@ int tui_key(struct tui *t, int timeout_ms) {
 
 /* ---- messages and the application loop ------------------------------- */
 
-void tui_run(struct tui *t, struct tui_app *app) {
+/** @brief Set @p due to now + @p ms on the monotonic clock. */
+static void deadline(struct timespec *due, int ms) {
+    (void)clock_gettime(CLOCK_MONOTONIC, due);
+    due->tv_sec += ms / 1000;
+    due->tv_nsec += (long)(ms % 1000) * 1000000L;
+    if (due->tv_nsec >= 1000000000L) {
+        due->tv_nsec -= 1000000000L;
+        due->tv_sec++;
+    }
+}
+
+/** @brief Milliseconds from now until @p due; 0 once it has passed. */
+static int remaining(const struct timespec *due) {
+    struct timespec now;
+    long long ms;
+
+    (void)clock_gettime(CLOCK_MONOTONIC, &now);
+    ms = (long long)(due->tv_sec - now.tv_sec) * 1000 +
+         (long)(due->tv_nsec - now.tv_nsec) / 1000000L;
+    return ms < 0 ? 0 : (int)ms;
+}
+
+void tui_run(tui *t, tui_app *app) {
+    struct timespec due;
+    int tick = app->tick_ms;
+
     app->quit = false;
     app->view(app->model, t);
     tui_flush(t);
+    if (tick > 0)
+        deadline(&due, tick);
     for (;;) {
-        int k = tui_key(t, app->tick_ms > 0 ? app->tick_ms : -1);
-        struct tui_msg m;
+        /* The interval is a deadline, not a wait restarted by each key:
+         * a held key would otherwise starve the tick. */
+        int k = tui_key(t, tick > 0 ? remaining(&due) : -1);
+        tui_msg m;
 
         m.key = 0;
         m.w = t->w;
         m.h = t->h;
         if (k == TUI_KEY_NONE) {
-            if (app->tick_ms <= 0)
+            if (tick <= 0)
                 continue;
             m.type = TUI_MSG_TICK;
+            deadline(&due, tick);
         } else if (k == TUI_KEY_RESIZE) {
             (void)tui_resize(t);
             m.type = TUI_MSG_RESIZE;
@@ -696,12 +829,17 @@ void tui_run(struct tui *t, struct tui_app *app) {
         }
         if (app->quit)
             break;
+        if (app->tick_ms != tick) {
+            tick = app->tick_ms;
+            if (tick > 0)
+                deadline(&due, tick);
+        }
     }
 }
 
 /* ---- viewport -------------------------------------------------------- */
 
-void tui_viewport_clamp(struct tui_viewport *v, int rows, int height) {
+void tui_viewport_clamp(tui_viewport *v, int rows, int height) {
     if (rows < 0)
         rows = 0;
     if (height < 1)
@@ -720,13 +858,12 @@ void tui_viewport_clamp(struct tui_viewport *v, int rows, int height) {
         v->top = 0;
 }
 
-void tui_viewport_move(struct tui_viewport *v, int delta, int rows,
-                       int height) {
+void tui_viewport_move(tui_viewport *v, int delta, int rows, int height) {
     v->sel += delta;
     tui_viewport_clamp(v, rows, height);
 }
 
-bool tui_viewport_key(struct tui_viewport *v, int key, int rows, int height) {
+bool tui_viewport_key(tui_viewport *v, int key, int rows, int height) {
     switch (key) {
     case 'j':
     case TUI_KEY_DOWN:
@@ -759,9 +896,31 @@ bool tui_viewport_key(struct tui_viewport *v, int key, int rows, int height) {
 
 /* ---- table ----------------------------------------------------------- */
 
-void tui_table_draw(struct tui *t, tui_rect r, const struct tui_table *tb,
-                    int rows, tui_cell_fn cell, tui_rowstyle_fn rowstyle,
-                    void *ctx) {
+/* A proportional thumb on the last free column, only when there is more to
+ * see than fits. */
+static void draw_scrollbar(tui *t, tui_rect r, int rows, int top, int height) {
+    int x = r.x + r.w;
+    int thumb_h, max_top, thumb_y;
+
+    if (rows <= height || r.w <= 2)
+        return;
+    if (x >= t->w)
+        x = r.x + r.w - 1;
+    thumb_h = height * height / rows;
+    if (thumb_h < 1)
+        thumb_h = 1;
+    max_top = rows - height;
+    thumb_y = max_top > 0 ? top * (height - thumb_h) / max_top : 0;
+    for (int i = 0; i < height; i++) {
+        int on = i >= thumb_y && i < thumb_y + thumb_h;
+
+        putg(t, x, r.y + 1 + i, on != 0 ? G_SHADE : G_V,
+             on != 0 ? TUI_ACCENT : TUI_META);
+    }
+}
+
+void tui_table_draw(tui *t, tui_rect r, const tui_table *tb, int rows,
+                    tui_cell_fn cell, tui_rowstyle_fn rowstyle, void *ctx) {
     int x = r.x;
     int height = r.h - 1;
     char buf[TUI_CELL_MAX];
@@ -793,20 +952,21 @@ void tui_table_draw(struct tui *t, tui_rect r, const struct tui_table *tb,
     if (height < 1)
         return;
 
-    struct tui_viewport vp = tb->vp;
+    tui_viewport vp = tb->vp;
     tui_viewport_clamp(&vp, rows, height);
     for (int i = 0; i < height && vp.top + i < rows; i++) {
         int row = vp.top + i;
         int y = r.y + 1 + i;
-        tui_style st = rowstyle != NULL ? rowstyle(ctx, row) : TUI_PLAIN;
+        tui_style st = rowstyle != nullptr ? rowstyle(ctx, row) : TUI_PLAIN;
         bool cur = row == vp.sel;
 
         x = r.x;
         if (cur) {
             tui_style fs = st;
-            fs.attr = (unsigned char)(fs.attr | TUI_REVERSE);
+
+            fs.bg = TUI_SEL_BG;
             tui_fill(t, r.x, y, r.w, 1, ' ', fs);
-            st.attr = fs.attr;
+            st = fs;
         } else {
             tui_fill(t, r.x, y, r.w, 1, ' ', TUI_PLAIN);
         }
@@ -816,7 +976,7 @@ void tui_table_draw(struct tui *t, tui_rect r, const struct tui_table *tb,
             if (w > r.x + r.w - x)
                 w = r.x + r.w - x;
             buf[0] = '\0';
-            if (cell != NULL)
+            if (cell != nullptr)
                 cell(ctx, row, c, buf, sizeof buf);
             if (tb->cols[c].right)
                 tui_printf(t, x, y, w, st, "%*s", w, buf);
@@ -827,9 +987,10 @@ void tui_table_draw(struct tui *t, tui_rect r, const struct tui_table *tb,
                 x += 1;
         }
     }
+    draw_scrollbar(t, r, rows, vp.top, height);
 }
 
-bool tui_table_key(struct tui_table *tb, int key, int rows, int height) {
+bool tui_table_key(tui_table *tb, int key, int rows, int height) {
     if (tb->ncols == 0 && key == 0)
         return false;
     return tui_viewport_key(&tb->vp, key, rows, height);
@@ -854,8 +1015,7 @@ bool tui_tabs_key(int key, int *active, int n) {
 
 /* ---- text input ------------------------------------------------------ */
 
-void tui_input_draw(struct tui *t, tui_rect r, const struct tui_input *in,
-                    tui_style st) {
+void tui_input_draw(tui *t, tui_rect r, const tui_input *in, tui_style st) {
     if (r.w < 3 || r.h < 1)
         return;
     tui_fill(t, r.x, r.y, r.w, 1, ' ', st);
@@ -866,7 +1026,7 @@ void tui_input_draw(struct tui *t, tui_rect r, const struct tui_input *in,
         start = in->pos - w + 1;
     tui_printf(t, r.x + 1, r.y, w, st, "%.*s", w, in->buf + start);
     if (in->focus) {
-        tui_style cur = TUI_STYLE((unsigned char)(st.fg ^ 0), 7, 0);
+        tui_style cur = TUI_STYLE(16, 252, 0);
         int cx = r.x + 1 + in->pos - start;
 
         if (cx < r.x + 1 + w) {
@@ -876,7 +1036,7 @@ void tui_input_draw(struct tui *t, tui_rect r, const struct tui_input *in,
     }
 }
 
-bool tui_input_key(struct tui_input *in, int key) {
+bool tui_input_key(tui_input *in, int key) {
     if (!in->focus)
         return false;
     if (key >= 32 && key < 127) {
@@ -930,50 +1090,110 @@ bool tui_input_key(struct tui_input *in, int key) {
 
 /* ---- progress and status -------------------------------------------- */
 
-void tui_progress(struct tui *t, int x, int y, int width, int pct) {
+void tui_progress(tui *t, int x, int y, int width, int pct) {
     tui_style st;
-    int fill, room, i;
+    int fill, i;
 
-    if (width < 4)
+    if (width < 2)
         return;
-    room = width - 2;
-    fill = pct < 0 ? 0 : pct * room / 100;
-    if (fill > room)
-        fill = room;
+    fill = pct < 0 ? 0 : pct * width / 100;
+    if (fill > width)
+        fill = width;
     st = pct < 0    ? TUI_META
          : pct < 70 ? TUI_GOOD
          : pct < 85 ? TUI_WARN
                     : TUI_BAD;
-    tui_put(t, x, y, "[", 1, TUI_META);
-    for (i = 0; i < room; i++)
-        tui_put(t, x + 1 + i, y, i < fill ? "=" : " ", 1,
-                i < fill ? st : TUI_META);
-    tui_put(t, x + width - 1, y, "]", 1, TUI_META);
+    /* A track with a shaded fill, no brackets: `[####    ]` is the other
+     * thing that read as curses. */
+    for (i = 0; i < width; i++)
+        putg(t, x + i, y, i < fill ? G_SHADE : G_H, i < fill ? st : TUI_META);
 }
 
-void tui_hints(struct tui *t, int x, int y, int maxw,
-               const struct tui_hint *hints, int n) {
-    for (int i = 0; i < n; i++) {
-        int kl = (int)strlen(hints[i].key);
-        int ll = (int)strlen(hints[i].label);
+void tui_keymap_footer(tui *t, int x, int y, int maxw, const tui_binding *km,
+                       int n, int tab) {
+    unsigned bit = 1u << (unsigned)tab;
 
+    for (int i = 0; i < n; i++) {
+        int kl, ll;
+
+        if (!km[i].in_footer || (km[i].tabs & bit) == 0)
+            continue;
+        kl = (int)strlen(km[i].key);
+        ll = (int)strlen(km[i].label);
         if (x + kl + ll + 4 > maxw)
             break;
-        tui_put(t, x, y, " ", 1, TUI_META);
-        tui_printf(t, x + 1, y, kl, TUI_KEYCAP, "%s", hints[i].key);
-        tui_put(t, x + 1 + kl, y, " ", 1, TUI_META);
-        tui_printf(t, x + 2 + kl, y, ll, TUI_META, "%s", hints[i].label);
+        tui_put(t, x, y, " ", 1, TUI_BAR);
+        tui_printf(t, x + 1, y, kl, TUI_KEYCAP, "%s", km[i].key);
+        tui_put(t, x + 1 + kl, y, " ", 1, TUI_BAR);
+        tui_printf(t, x + 2 + kl, y, ll, TUI_BAR, "%s", km[i].label);
         x += kl + ll + 3;
     }
 }
 
-void tui_statusbar(struct tui *t, const char *left, const char *right) {
+void tui_keymap_help(tui *t, const tui_binding *km, int n, const char *title) {
+    int w = t->w < 68 ? t->w - 2 : 66;
+    int h = t->h < 20 ? t->h - 2 : 18;
+    int x = (t->w - w) / 2;
+    int y = (t->h - h) / 2;
+    const char *group = nullptr;
+    int row = y + 2;
+    int col_x = x + 2;
+
+    if (x < 0)
+        x = 0;
+    if (y < 0)
+        y = 0;
+    tui_fill(t, x, y, w, h, ' ', TUI_PLAIN);
+    tui_box_frame(t, x, y, w, h, TUI_ACCENT, title, TUI_ACCENT);
+    for (int i = 0; i < n && row < y + h - 2; i++) {
+        int kl, ll, need;
+
+        if (group == nullptr || strcmp(group, km[i].group) != 0) {
+            if (group != nullptr)
+                row += 2;
+            if (row >= y + h - 2)
+                break;
+            group = km[i].group;
+            tui_printf(t, x + 2, row++, w - 4, TUI_LABEL, "%s", group);
+            col_x = x + 2;
+        }
+        kl = (int)strlen(km[i].key);
+        ll = (int)strlen(km[i].label);
+        need = kl + ll + 4;
+        if (col_x + need > x + w - 2) {
+            row++;
+            col_x = x + 2;
+            if (row >= y + h - 2)
+                break;
+        }
+        tui_printf(t, col_x, row, kl, TUI_KEYCAP, "%s", km[i].key);
+        tui_printf(t, col_x + kl + 1, row, ll, TUI_META, "%s", km[i].label);
+        col_x += need;
+    }
+    tui_printf(t, x + 2, y + h - 2, w - 4, TUI_META, "press ? or ESC to close");
+}
+
+void tui_sparkline(tui *t, int x, int y, const unsigned char *vals, int n,
+                   tui_style st) {
+    static const char ramp[] = " .:-=+*#%";
+
+    for (int i = 0; i < n; i++) {
+        unsigned v = vals[i] > 100u ? 100u : vals[i];
+        unsigned idx = (v * 8u + 50u) / 100u;
+        /* tui_put expects a terminated string, so the sample is one. */
+        char c[2] = {ramp[idx], '\0'};
+
+        tui_put(t, x + i, y, c, 1, st);
+    }
+}
+
+void tui_statusbar(tui *t, const char *left, const char *right) {
     int y = t->h - 1;
 
     tui_fill(t, 0, y, t->w, 1, ' ', TUI_BAR);
-    if (left != NULL)
+    if (left != nullptr)
         tui_printf(t, 1, y, t->w - 2, TUI_PLAIN, "%s", left);
-    if (right != NULL) {
+    if (right != nullptr) {
         int n = (int)strlen(right);
         tui_printf(t, t->w - 1 - n, y, n, TUI_PLAIN, "%s", right);
     }

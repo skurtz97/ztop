@@ -19,17 +19,37 @@ import time
 W, H = 100, 30
 grid = [[' '] * W for _ in range(H)]
 row = col = 0
+# G0 set: DEC Special Graphics letters when ESC(0 selected it, else ASCII.
+# The library draws its frame that way; paint what the terminal would show.
+acs = False
+pending = b''
+DEC = {'l': '\u250c', 'k': '\u2510', 'm': '\u2514', 'j': '\u2518',
+       'q': '\u2500', 'x': '\u2502', 't': '\u251c', 'u': '\u2524',
+       'w': '\u252c', 'v': '\u2534', 'n': '\u253c', 'a': '\u2592'}
 
 def feed(data):
-    global row, col
+    global row, col, acs, pending
+    data = pending + data
+    pending = b''
     i = 0
     while i < len(data):
         b = data[i]
-        if b == 0x1b and i + 1 < len(data) and data[i + 1] == ord('['):
+        if b == 0x1b and i + 1 >= len(data):
+            pending = data[i:]
+            return
+        if b == 0x1b and data[i + 1] == ord('('):
+            if i + 3 > len(data):
+                pending = data[i:]
+                return
+            acs = data[i + 2] == ord('0')
+            i += 3
+            continue
+        if b == 0x1b and data[i + 1] == ord('['):
             j = i + 2
             while j < len(data) and not (0x40 <= data[j] <= 0x7e):
                 j += 1
             if j >= len(data):
+                pending = data[i:]
                 return
             params = data[i + 2:j].decode('latin1')
             final = chr(data[j])
@@ -51,7 +71,8 @@ def feed(data):
             row = min(H - 1, row + 1)
         elif b >= 0x20:
             if row < H and col < W:
-                grid[row][col] = chr(b)
+                c = chr(b)
+                grid[row][col] = DEC.get(c, c) if acs else c
             col += 1
         i += 1
 
@@ -77,10 +98,14 @@ def pump(t):
             return
         feed(d)
 
+def show(what):
+    print('===', what)
+    for line in grid:
+        print(''.join(line).rstrip())
+
 pump(2.0)
+show('initial')
 for k in [b'\t', b'\t', b'\t', b'\t', b'?', b'?', b'q']:
     os.write(fd, k)
     pump(1.0)
-    print('=== after', k)
-    for line in grid:
-        print(''.join(line).rstrip())
+    show(f'after {k!r}')

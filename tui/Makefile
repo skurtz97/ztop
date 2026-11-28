@@ -14,7 +14,7 @@
 .SUFFIXES:
 
 CC     = cc
-CFLAGS = -std=c17 -O2 -Wall -Wextra -Wshadow -Wpedantic \
+CFLAGS = -std=c23 -O2 -Wall -Wextra -Wshadow -Wpedantic \
          -D_XOPEN_SOURCE=500 -D_POSIX_C_SOURCE=200112L
 AR     = ar
 

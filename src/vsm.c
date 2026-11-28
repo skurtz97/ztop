@@ -8,19 +8,19 @@
 #include <stdio.h>
 #include <string.h>
 
-struct rd {
+typedef struct rd {
     const unsigned char *p;
     unsigned len;
     unsigned off;
     bool bad;
-};
+} rd;
 
 static uint32_t be32(const unsigned char *p) {
     return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
            ((uint32_t)p[2] << 8) | (uint32_t)p[3];
 }
 
-static uint32_t rd32(struct rd *r) {
+static uint32_t rd32(rd *r) {
     if (r->bad || r->off > r->len || r->len - r->off < 4) {
         r->bad = true;
         return 0;
@@ -30,7 +30,7 @@ static uint32_t rd32(struct rd *r) {
     return v;
 }
 
-static unsigned rd8(struct rd *r) {
+static unsigned rd8(rd *r) {
     if (r->bad || r->off >= r->len) {
         r->bad = true;
         return 0;
@@ -38,7 +38,7 @@ static unsigned rd8(struct rd *r) {
     return r->p[r->off++];
 }
 
-static bool fail(struct vsm_info *v, const char *what, unsigned off) {
+static bool fail(vsm_info *v, const char *what, unsigned off) {
     (void)snprintf(v->err, sizeof v->err, "%s at offset %u", what, off);
     return false;
 }
@@ -46,13 +46,13 @@ static bool fail(struct vsm_info *v, const char *what, unsigned off) {
 /* Every block needs at least its 8-byte address/length pair.  A count larger
  * than the remaining bytes can never be honest, and it would make us loop
  * for a long time on a corrupt or truncated data area. */
-static bool count_ok(const struct rd *r, uint32_t n) {
+static bool count_ok(const rd *r, uint32_t n) {
     if (r->off > r->len)
         return false;
     return n <= (r->len - r->off) / 8;
 }
 
-void vsm_reset(struct vsm_info *v, unsigned area, unsigned space) {
+void vsm_reset(vsm_info *v, unsigned area, unsigned space) {
     memset(v, 0, sizeof *v);
     v->area = area;
     v->space = space;
@@ -70,7 +70,7 @@ bool vsm_work_data(const unsigned char *work, unsigned wlen,
     dlen = be32(work + 8);
 
     if (dlen == 0) {
-        *data = NULL;
+        *data = nullptr;
         *len = 0;
         return true;
     }
@@ -82,16 +82,15 @@ bool vsm_work_data(const unsigned char *work, unsigned wlen,
     return true;
 }
 
-static struct vsm_subpool *sub_find(struct vsm_info *v, unsigned id,
-                                    uint32_t tcb) {
+static vsm_subpool *sub_find(vsm_info *v, unsigned id, uint32_t tcb) {
     for (int i = 0; i < v->nsub; i++)
         if (v->sub[i].id == id && v->sub[i].tcb == tcb)
             return &v->sub[i];
     if (v->nsub == VSM_MAX_SUB) {
         v->truncated = true;
-        return NULL;
+        return nullptr;
     }
-    struct vsm_subpool *s = &v->sub[v->nsub++];
+    vsm_subpool *s = &v->sub[v->nsub++];
     memset(s, 0, sizeof *s);
     s->id = id;
     s->tcb = tcb;
@@ -101,8 +100,7 @@ static struct vsm_subpool *sub_find(struct vsm_info *v, unsigned id,
 
 /* One allocated block, plus its free descriptors when SPACE=FREE.
  * Collected into s when there is room, and into the area totals always. */
-static bool parse_block(struct rd *r, struct vsm_info *v,
-                        struct vsm_subpool *s) {
+static bool parse_block(rd *r, vsm_info *v, vsm_subpool *s) {
     unsigned off = r->off;
     uint32_t addr = rd32(r);
     uint32_t blen = rd32(r);
@@ -136,6 +134,11 @@ static bool parse_block(struct rd *r, struct vsm_info *v,
     v->foot += blen;
     v->free += bfree;
     v->used += used;
+    /* A block is counted on the side of the line its first byte is on. */
+    if (addr < VSM_LINE_16M)
+        v->below += used;
+    else
+        v->above += used;
     if (blen > v->largest)
         v->largest = blen;
     if (addr < v->lo)
@@ -143,11 +146,15 @@ static bool parse_block(struct rd *r, struct vsm_info *v,
     if ((uint64_t)addr + blen > v->hi)
         v->hi = (uint32_t)((uint64_t)addr + blen);
 
-    if (s != NULL) {
+    if (s != nullptr) {
         s->blocks++;
         s->foot += blen;
         s->free += bfree;
         s->used += used;
+        if (addr < VSM_LINE_16M)
+            s->below += used;
+        else
+            s->above += used;
         if (blen > s->largest)
             s->largest = blen;
         if (addr < s->lo)
@@ -158,7 +165,7 @@ static bool parse_block(struct rd *r, struct vsm_info *v,
     return true;
 }
 
-static bool parse_alloc_section(struct rd *r, struct vsm_info *v) {
+static bool parse_alloc_section(rd *r, vsm_info *v) {
     uint32_t nsub = rd32(r);
     if (r->bad)
         return fail(v, "subpool count past end of data", r->off - 4);
@@ -192,8 +199,8 @@ static bool parse_alloc_section(struct rd *r, struct vsm_info *v) {
             return fail(v, "allocated-block count larger than the data area",
                         r->off - 4);
 
-        struct vsm_subpool *s = sub_find(v, id, v->area == VSM_PVT ? tcb : 0);
-        if (s != NULL) {
+        vsm_subpool *s = sub_find(v, id, v->area == VSM_PVT ? tcb : 0);
+        if (s != nullptr) {
             s->key = flags & 0x0Fu;
             s->flags = flags;
         }
@@ -204,9 +211,8 @@ static bool parse_alloc_section(struct rd *r, struct vsm_info *v) {
     return true;
 }
 
-bool vsm_parse_alloc(struct vsm_info *v, const unsigned char *data,
-                     unsigned len) {
-    struct rd r = {data, len, 0, false};
+bool vsm_parse_alloc(vsm_info *v, const unsigned char *data, unsigned len) {
+    rd r = {data, len, 0, false};
 
     if (v->area == VSM_PVT) {
         uint32_t n = rd32(&r);
@@ -229,9 +235,8 @@ bool vsm_parse_alloc(struct vsm_info *v, const unsigned char *data,
     return true;
 }
 
-bool vsm_parse_unalloc(struct vsm_info *v, const unsigned char *data,
-                       unsigned len) {
-    struct rd r = {data, len, 0, false};
+bool vsm_parse_unalloc(vsm_info *v, const unsigned char *data, unsigned len) {
+    rd r = {data, len, 0, false};
     uint32_t nreg = rd32(&r);
 
     if (r.bad)

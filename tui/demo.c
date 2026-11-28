@@ -6,7 +6,7 @@
 #include "tui.h"
 
 int main(void) {
-    struct tui t;
+    tui t;
     int x = 4;
 
     if (!tui_open(&t)) {

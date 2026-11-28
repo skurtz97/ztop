@@ -48,7 +48,7 @@ static int fail_line(int line, const char *what) {
     } while (0)
 
 static int test_csa(void) {
-    struct vsm_info v;
+    vsm_info v;
 
     len = 0;
     put32(2);
@@ -89,7 +89,7 @@ static int test_csa(void) {
 }
 
 static int test_merge(void) {
-    struct vsm_info v;
+    vsm_info v;
 
     len = 0;
     put32(1);
@@ -108,8 +108,30 @@ static int test_merge(void) {
     return 0;
 }
 
+static int test_line16(void) {
+    vsm_info v;
+
+    len = 0;
+    put32(1);
+    desc(230, 0x08, 0, 8);
+    put32(2);
+    block(0x00FF0000, 0x1000); /* ends exactly at the line: below */
+    put32(0);
+    block(0x01000000, 0x1000); /* starts at the line: above */
+    put32(0);
+
+    vsm_reset(&v, VSM_CSA, VSM_FREE);
+    CHECK(vsm_parse_alloc(&v, buf, len));
+    CHECK(v.used == 0x2000);
+    CHECK(v.below == 0x1000);
+    CHECK(v.above == 0x1000);
+    CHECK(v.sub[0].below == 0x1000);
+    CHECK(v.sub[0].above == 0x1000);
+    return 0;
+}
+
 static int test_pvt(void) {
-    struct vsm_info v;
+    vsm_info v;
 
     len = 0;
     put32(1);
@@ -131,7 +153,7 @@ static int test_pvt(void) {
 }
 
 static int test_unalloc(void) {
-    struct vsm_info v;
+    vsm_info v;
 
     len = 0;
     put32(2);
@@ -157,7 +179,7 @@ static int test_unalloc(void) {
 }
 
 static int test_bad(void) {
-    struct vsm_info v;
+    vsm_info v;
 
     /* descriptor length below the documented minimum */
     len = 0;
@@ -213,6 +235,7 @@ int main(void) {
 
     rc |= test_csa();
     rc |= test_merge();
+    rc |= test_line16();
     rc |= test_pvt();
     rc |= test_unalloc();
     rc |= test_bad();
