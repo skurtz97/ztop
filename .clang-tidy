@@ -54,6 +54,7 @@ Checks: >
   -readability-function-size,
   -readability-inconsistent-declaration-parameter-name,
   -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-signed-bitwise,
   -performance-no-int-to-ptr
 
 # Not enabled, on purpose:
@@ -80,6 +81,13 @@ Checks: >
 #   readability-magic-numbers, readability-identifier-length
 #                       (noise in a parser and a bit-twiddling arithmetic
 #                        scanner)
+#   bugprone-signed-bitwise
+#                       (LLVM 23 flags unsigned operands: it reports
+#                        `unsigned b = a >> 2;` and `p[0] = (unsigned
+#                        char)(len >> 8);`, so it says nothing about
+#                        signedness here.  Reading a big-endian field is
+#                        memcpy plus an explicit shift, which the check
+#                        does not improve.)
 
 WarningsAsErrors: ''
 HeaderFilterRegex: "^(.*/)?(src|tui)/.*\\.h$"
