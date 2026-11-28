@@ -8,7 +8,7 @@
 #include "sys.h"
 
 int main(void) {
-    struct zipl z;
+    zipl z;
 
     /* CBT, IPLed at 17:02:47 on 21 September 2026 (day 264). */
     assert(zipl_decode(0x0126264Fu, 6136760u, &z));

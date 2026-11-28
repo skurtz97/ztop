@@ -9,3 +9,8 @@ CEEDUMP.*
 *.lst
 compile_commands.json
 tests/test_sys
+
+# agent notes for this checkout: host-specific, not part of the tree
+AGENTS.md
+__pycache__/
+tests/test_mdb

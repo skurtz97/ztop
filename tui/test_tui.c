@@ -1,8 +1,12 @@
-/* Buffer-level tests for libtui: no terminal, no clock, no signals.
+/* Buffer-level tests for libtui: no terminal, no signals.  The tick test
+ * uses a pipe and a real clock, because that is where the bug was.
  * `make test` builds and runs this next to the library. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
+#include <sys/wait.h>
+#include <unistd.h>
 
 #include "tui.h"
 
@@ -16,12 +20,12 @@ static int fails;
         }                                                                      \
     } while (0)
 
-static unsigned char cell(const struct tui *t, int x, int y) {
+static unsigned char cell(const tui *t, int x, int y) {
     return t->cur[(size_t)y * (size_t)t->w + (size_t)x].ch;
 }
 
 static void test_buffer(void) {
-    struct tui t;
+    tui t;
 
     memset(&t, 0, sizeof t);
     CHECK(tui_alloc(&t, 20, 6));
@@ -55,7 +59,7 @@ static void test_buffer(void) {
 }
 
 static void test_viewport(void) {
-    struct tui_viewport v = {0, 0};
+    tui_viewport v = {0, 0};
 
     tui_viewport_clamp(&v, 10, 3);
     CHECK(v.sel == 0 && v.top == 0);
@@ -85,23 +89,26 @@ static void test_tabs(void) {
     CHECK(act == 2);
     CHECK(!tui_tabs_key('x', &act, 3));
 
-    struct tui t;
+    tui t;
 
     memset(&t, 0, sizeof t);
     CHECK(tui_alloc(&t, 30, 2));
     static const char *const labels[3] = {"one", "two", "three"};
     int x = tui_tabs_draw(&t, 0, 0, labels, 3, 1);
-    CHECK(x == 5 + 1 + 5 + 1 + 7);
+    CHECK(x == 5 + 2 + 5 + 2 + 7);
     CHECK(cell(&t, 0, 0) == ' ');
     CHECK(cell(&t, 1, 0) == 'o');
     CHECK(cell(&t, 6, 0) == ' ');
-    CHECK(cell(&t, 7, 0) == 't');
+    CHECK(cell(&t, 7, 0) == ' ');
+    CHECK(cell(&t, 8, 0) == 't');
+    CHECK(tui_tabs_hit(8, labels, 3) == 1);
+    CHECK(tui_tabs_hit(6, labels, 3) == -1);
     free(t.cur);
     free(t.old);
 }
 
 static void test_input(void) {
-    struct tui_input in;
+    tui_input in;
 
     memset(&in, 0, sizeof in);
     in.focus = true;
@@ -129,23 +136,137 @@ static void called(void *ctx, int row, int col, char *buf, size_t len) {
 }
 
 static void test_table(void) {
-    static const struct tui_col cols[2] = {
+    static const tui_col cols[2] = {
         {"A", 5, false},
         {"B", 4, true},
     };
-    struct tui_table tb = {cols, 2, {0, 0}};
-    struct tui t;
+    tui_table tb = {cols, 2, {0, 0}};
+    tui t;
 
     memset(&t, 0, sizeof t);
     CHECK(tui_alloc(&t, 20, 5));
-    tui_table_draw(&t, (tui_rect){0, 0, 20, 5}, &tb, 3, called, NULL, NULL);
+    tui_table_draw(&t, (tui_rect){0, 0, 20, 5}, &tb, 3, called, nullptr,
+                   nullptr);
     CHECK(cell(&t, 0, 0) == 'A');
     CHECK(cell(&t, 6, 0) == ' ');
     CHECK(cell(&t, 6, 1) == 'r'); /* first data row, first column */
     CHECK(cell(&t, 8, 1) == 'c');
     tb.vp.sel = 2;
-    tui_table_draw(&t, (tui_rect){0, 0, 20, 5}, &tb, 3, called, NULL, NULL);
+    tui_table_draw(&t, (tui_rect){0, 0, 20, 5}, &tb, 3, called, nullptr,
+                   nullptr);
     CHECK(cell(&t, 6, 3) == 'r'); /* third row is last visible */
+    free(t.cur);
+    free(t.old);
+}
+
+/* Layout, sparkline and keymap: geometry is computed once and shared. */
+static void test_widgets(void) {
+    tui t;
+    tui_rect a, b, r = {0, 0, 80, 24};
+    static const unsigned char samples[] = {0, 50, 100};
+    static const tui_binding km[] = {
+        {"q", "quit", "screen", 0xFu, true},
+    };
+
+    tui_split_v(r, 3, &a, &b);
+    CHECK(a.y == 0 && a.h == 3 && b.y == 3 && b.h == 21);
+    tui_split_h(b, 50, &a, &b);
+    CHECK(a.x == 0 && a.w == 50 && b.x == 50 && b.w == 30);
+    a = tui_inset(r, 2, 1);
+    CHECK(a.x == 2 && a.y == 1 && a.w == 76 && a.h == 22);
+    CHECK(tui_rect_hit(a, 2, 1));
+    CHECK(!tui_rect_hit(a, 1, 1));
+    CHECK(!tui_rect_hit(a, 78, 1));
+
+    memset(&t, 0, sizeof t);
+    CHECK(tui_alloc(&t, 40, 6));
+    tui_clear(&t);
+    tui_sparkline(&t, 0, 0, samples, 3, TUI_ACCENT);
+    CHECK(cell(&t, 0, 0) == ' ');
+    CHECK(cell(&t, 1, 0) == '=');
+    CHECK(cell(&t, 2, 0) == '%');
+    tui_keymap_footer(&t, 0, 1, 40, km, 1, 0);
+    CHECK(cell(&t, 1, 1) == 'q');
+    free(t.cur);
+    free(t.old);
+}
+
+typedef struct tick_state {
+    int ticks;
+    int keys;
+} tick_state;
+
+static void nothing(void *model, tui *t) {
+    (void)model, (void)t;
+}
+
+static bool tick_update(tui_app *app, const tui_msg *m) {
+    tick_state *s = app->model;
+
+    if (m->type == TUI_MSG_TICK) {
+        s->ticks++;
+        app->quit = s->ticks >= 2;
+        return false;
+    }
+    if (m->type == TUI_MSG_KEY) {
+        s->keys++;
+        if (s->keys >= 100) /* the bug: keys all the way and not a tick */
+            app->quit = true;
+    }
+    return false;
+}
+
+/* The interval is a deadline, not a wait restarted by every key.  A child
+ * holds a key down at 5 ms intervals; with the old code the 50 ms select
+ * never expired and no tick arrived. */
+static void test_tick(void) {
+    tui t;
+    tui_app app;
+    tick_state s;
+    int p[2];
+    pid_t pid;
+
+    memset(&t, 0, sizeof t);
+    memset(&app, 0, sizeof app);
+    memset(&s, 0, sizeof s);
+    CHECK(pipe(p) == 0);
+    CHECK(tui_alloc(&t, 20, 6));
+    t.fd_in = p[0];
+    t.fd_out = -1; /* nothing redraws, so nothing is flushed */
+    app.model = &s;
+    app.update = tick_update;
+    app.view = nothing;
+    app.tick_ms = 50;
+
+    pid = fork();
+    CHECK(pid >= 0);
+    if (pid == 0) {
+        int idle[2];
+
+        (void)close(p[0]);
+        if (pipe(idle) != 0)
+            _exit(1);
+        for (int i = 0; i < 200; i++) {
+            /* select is the sleep this build has: nanosleep is not
+             * declared on z/OS, and nfds 0 with no set returns at once. */
+            fd_set f;
+            struct timeval gap = {0, 5000};
+
+            if (write(p[1], "j", 1) != 1)
+                break;
+            FD_ZERO(&f);
+            FD_SET(idle[0], &f);
+            (void)select(idle[0] + 1, &f, nullptr, nullptr, &gap);
+        }
+        _exit(0);
+    }
+    (void)close(p[1]);
+    tui_run(&t, &app);
+    CHECK(s.ticks == 2);
+    CHECK(s.keys < 100);
+
+    (void)close(p[0]); /* the writer stops on the next write */
+    (void)waitpid(pid, nullptr, 0);
     free(t.cur);
     free(t.old);
 }
@@ -156,6 +277,8 @@ int main(void) {
     test_tabs();
     test_input();
     test_table();
+    test_widgets();
+    test_tick();
     (void)printf("test_tui: %s\n", fails == 0 ? "ok" : "FAILED");
     return fails != 0;
 }

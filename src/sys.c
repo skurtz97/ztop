@@ -60,7 +60,7 @@ static unsigned int nib(uint32_t v, unsigned int shift) {
     return (v >> shift) & 0xFu;
 }
 
-bool zipl_decode(uint32_t date, uint32_t hundredths, struct zipl *out) {
+bool zipl_decode(uint32_t date, uint32_t hundredths, zipl *out) {
     static const unsigned int mdays[12] = {
         31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
     };
@@ -96,7 +96,7 @@ bool zipl_decode(uint32_t date, uint32_t hundredths, struct zipl *out) {
     return true;
 }
 
-bool zsys_read(struct zsys *z) {
+bool zsys_read(zsys *z) {
 #ifdef __MVS__
     uintptr_t cvt, asvt;
     uint32_t maxu, entry;
@@ -112,7 +112,7 @@ bool zsys_read(struct zsys *z) {
     maxu = rd32(asvt + 0x204);
     z->slots = maxu > 0x10000 ? 0x10000 : maxu;
     for (i = 0; i < z->slots && z->njobs < ZJOB_MAX; i++) {
-        struct zjob *j = &z->job[z->njobs];
+        zjob *j = &z->job[z->njobs];
         uint32_t namep;
 
         entry = rd32(asvt + 0x210 + (uintptr_t)i * 4);
@@ -140,7 +140,7 @@ bool zsys_read(struct zsys *z) {
 #endif
 }
 
-bool zpage_read(struct zpage *p) {
+bool zpage_read(zpage *p) {
 #ifdef __MVS__
     uintptr_t cvt = rd32(0x10);
     uintptr_t asmvt;

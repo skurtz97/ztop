@@ -9,6 +9,7 @@
 #   make            build ./ztop (z/OS)
 #   make check      run it against storage, system and jobs
 #   make test       parser, library and system helpers, on any host
+#   make tidy       clang-tidy over the portable sources
 #   make demo       tui/demo, the library on its own
 #   make clean      remove what the targets above write
 #
@@ -39,13 +40,13 @@ ASFLAGS  = -fno-integrated-as -Xpreprocessor -P
 
 # The library is compiled into the program rather than linked as an
 # archive: one binary, and the same sources build on Linux for the tests.
-SRC = src/ztop.c src/vsm.c src/sys.c tui/tui.c
-OBJ = src/zvslist.o
-HDR = src/vsm.h src/sys.h tui/tui.h
+SRC = src/ztop.c src/vsm.c src/sys.c src/uss.c src/mdb.c src/zmcs.c tui/tui.c
+OBJ = src/zvslist.o src/zmcs.o
+HDR = src/vsm.h src/sys.h src/uss.h src/mdb.h tui/tui.h
 
 # The portable half: no z/OS services, no terminal.
 TESTCC    = cc
-TESTFLAGS = -std=c17 -g -O1 -Wall -Wextra -Wshadow -Wpedantic \
+TESTFLAGS = -std=c23 -g -O1 -Wall -Wextra -Wshadow -Wpedantic \
             -D_XOPEN_SOURCE=500 -D_POSIX_C_SOURCE=200112L
 
 # Language Environment sees every heap request the program makes.  Its
@@ -54,12 +55,13 @@ TESTFLAGS = -std=c17 -g -O1 -Wall -Wextra -Wshadow -Wpedantic \
 # allocated and never freed.  HEAPCHK(ON) additionally walks the heap at
 # every call, so a double free or an overlay abends instead of hiding.
 
-# git checkout leaves every source untagged, and the z/OS tools then read
-# ASCII through the EBCDIC converter: make spins on the Makefile, sh
-# rejects the script, awk reads garbage.  Run this once after a checkout.
+# The working tree arrives tagged ISO8859-1 from .gitattributes, so this is
+# only for a tree that predates that file or a file written by hand.  The
+# tag matters because make, sh, awk and the compiler read these files
+# through the EBCDIC converter and see ASCII, not EBCDIC.
 tag:
 	@-chtag -t -c ISO8859-1 Makefile README.md DESIGN.md tests/*.sh tests/*.py
-	@-chtag -t -c ISO8859-1 src/*.c src/*.h src/*.S tui/*.c tui/*.h
+	@-chtag -t -c ISO8859-1 src/*.c src/*.h src/*.S src/*.s tui/*.c tui/*.h
 	@-chtag -t -c ISO8859-1 tui/Makefile tui/test_tui.c tui/demo.c
 
 all:
@@ -73,17 +75,28 @@ ztop: $(SRC) $(OBJ) $(HDR)
 src/zvslist.o: src/zvslist.S
 	$(CC) $(CFLAGS) $(ASFLAGS) -c -o $@ src/zvslist.S
 
+# zmcs.s is plain assembler on purpose: the .S path puts the source
+# through clang's preprocessor, and that squeezes the runs of blanks
+# which hold a continuation character in column 72.  A macro call that
+# needs more than one line cannot survive it, and this stub has no
+# #ifdef to justify the preprocessor anyway.
+src/zmcs.o: src/zmcs.s
+	$(CC) $(CFLAGS) -fno-integrated-as -c -o $@ src/zmcs.s
+
 check: ztop
 	./ztop
 	./ztop -a sqa
 	./ztop -a pvt
 	./ztop -j
 
-test: tests/test_vsm.c tests/test_sys.c src/vsm.c src/sys.c tui/test_tui.c tui/tui.c
+test: tests/test_vsm.c tests/test_sys.c tests/test_mdb.c src/vsm.c src/sys.c \
+    src/mdb.c tui/test_tui.c tui/tui.c
 	$(TESTCC) $(TESTFLAGS) -o tests/test_vsm tests/test_vsm.c src/vsm.c
 	./tests/test_vsm
 	$(TESTCC) $(TESTFLAGS) -Isrc -o tests/test_sys tests/test_sys.c src/sys.c
 	./tests/test_sys
+	$(TESTCC) $(TESTFLAGS) -Isrc -o tests/test_mdb tests/test_mdb.c src/mdb.c
+	./tests/test_mdb
 	$(TESTCC) $(TESTFLAGS) -Itui -o tui/test_tui tui/test_tui.c tui/tui.c
 	./tui/test_tui
 	@sh tests/leakcheck.sh --selftest
@@ -91,8 +104,23 @@ test: tests/test_vsm.c tests/test_sys.c src/vsm.c src/sys.c tui/test_tui.c tui/t
 demo: tui/demo.c tui/tui.c
 	$(TESTCC) $(TESTFLAGS) -Itui -o tui/demo tui/demo.c tui/tui.c
 
+# ztop.c needs the z/OS headers, so the tidy pass covers everything else:
+# the parser, the system helpers, the library and their tests.
+tidy:
+	clang-tidy src/vsm.c src/sys.c src/uss.c src/mdb.c src/zmcs.c \
+	    tui/tui.c tests/test_vsm.c tests/test_sys.c tests/test_mdb.c \
+	    tui/test_tui.c tui/demo.c -- \
+	    $(TESTFLAGS) -Isrc -Itui
+
 leakcheck: ztop
 	@sh tests/leakcheck.sh ./ztop
+
+# The console needs APF: extattr marks this file, and the library it sits
+# in still has to be in the APF list.  Then the user needs READ on
+# MVS.MCSOPER.ZTOP, and ztop is started with -c.
+auth:
+	extattr +ap ./ztop
+	ls -E ./ztop
 
 clean:
 	rm -f ztop $(OBJ) tests/test_vsm tests/test_sys tui/test_tui tui/demo

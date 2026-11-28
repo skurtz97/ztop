@@ -1,0 +1,7 @@
+# One rule, no exceptions: the repository is UTF-8 and the working tree is
+# ISO8859-1, so a checkout on z/OS is tagged ASCII, which is what make, sh,
+# awk and the compiler need when they read it through the EBCDIC converter.
+# This is the same line the zopen community's git port uses.  Everything in
+# the tree stays 7-bit; a box character belongs on the terminal, not in the
+# source.
+* text eol=lf working-tree-encoding=ISO8859-1
